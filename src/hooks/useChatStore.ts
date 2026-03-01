@@ -426,11 +426,11 @@ Rules:
 
       const userContent = `USER: ${userMsg}\n\nASSISTANT: ${assistantMsg}\n\nEXISTING FACTS (do not duplicate):\n${existingSample}`;
 
-      const res = await fetch(`${config.baseUrl}/chat/completions`, {
+      const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` },
         body: JSON.stringify({
-          model: config.model,
+          model: cfg.model,
           temperature: 0.0,
           max_tokens: 1024,
           messages: [
