@@ -1,15 +1,18 @@
 """
 Персональный ассистент — REST API
-Sessions, Messages, Facts, Settings — хранится в SQLite
+Sessions, Messages, Facts, Settings — PostgreSQL
 """
 
 import json
 import os
-import sqlite3
+import re
 import uuid
 from datetime import datetime, timezone
 
-DB_PATH = "/tmp/analyst.db"
+import psycopg2
+import psycopg2.extras
+
+SCHEMA = os.environ.get("MAIN_DB_SCHEMA", "t_p4825665_local_chat_assistant")
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -19,56 +22,13 @@ CORS_HEADERS = {
 }
 
 
-def get_db() -> sqlite3.Connection:
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA foreign_keys=ON")
+def get_db():
+    con = psycopg2.connect(
+        os.environ["DATABASE_URL"],
+        options=f"-c search_path={SCHEMA}",
+    )
+    con.autocommit = False
     return con
-
-
-def init_db():
-    con = get_db()
-    con.executescript("""
-        CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL DEFAULT 'Новый диалог',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-            role TEXT NOT NULL CHECK(role IN ('user','assistant','system')),
-            content TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS facts (
-            id TEXT PRIMARY KEY,
-            text TEXT NOT NULL,
-            category TEXT NOT NULL DEFAULT 'Другое',
-            source TEXT NOT NULL DEFAULT 'manual',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS settings (
-            id INTEGER PRIMARY KEY CHECK(id = 1),
-            base_url TEXT NOT NULL DEFAULT 'https://api.openai.com/v1',
-            api_key TEXT NOT NULL DEFAULT '',
-            model TEXT NOT NULL DEFAULT 'gpt-4o',
-            temperature REAL NOT NULL DEFAULT 0.7,
-            max_tokens INTEGER NOT NULL DEFAULT 2048,
-            system_prompt TEXT NOT NULL DEFAULT 'Ты — персональный ИИ-ассистент для анализа данных и принятия деловых решений.',
-            toggles_json TEXT NOT NULL DEFAULT '{"autoExtract":true,"antiDuplicates":true,"topFacts":true}'
-        );
-
-        INSERT OR IGNORE INTO settings (id) VALUES (1);
-    """)
-    con.commit()
-    con.close()
 
 
 def now_iso() -> str:
@@ -91,6 +51,19 @@ def err(message: str, status: int = 400) -> dict:
     }
 
 
+def rows_to_list(cur) -> list:
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def row_to_dict(cur) -> dict | None:
+    cols = [d[0] for d in cur.description]
+    row = cur.fetchone()
+    return dict(zip(cols, row)) if row else None
+
+
+# ── Router ─────────────────────────────────────────────────────
+
 def route(event: dict) -> dict:
     method = event.get("httpMethod", "GET").upper()
     path = event.get("path", "/")
@@ -101,38 +74,34 @@ def route(event: dict) -> dict:
     except Exception:
         body = {}
 
-    # Strip /api prefix if present
+    # Strip /api prefix
     if path.startswith("/api/"):
         path = path[4:]
     parts = [p for p in path.split("/") if p]
 
-    # Strip leading project-id segment (uuid4 format) added by proxy
-    import re
-    if parts and re.fullmatch(r"[0-9a-f]{8}(?:-?[0-9a-f]{4}){3}-?[0-9a-f]{12}|[a-z0-9]{20}", parts[0]):
+    # Strip leading project-id segment added by proxy (uuid or short alphanumeric)
+    if parts and re.fullmatch(r"[0-9a-f\-]{32,36}|[a-z0-9]{20}", parts[0]):
         parts = parts[1:]
 
-    # OPTIONS preflight
     if method == "OPTIONS":
         return ok({})
 
-    # ── health check ───────────────────────────────────────────
-    if not parts or parts == []:
-        return ok({"status": "ok", "version": "1.0"})
+    if not parts:
+        return ok({"status": "ok", "version": "2.0", "db": "postgres"})
 
-    # ── /sessions ──────────────────────────────────────────────
+    # /sessions
     if parts == ["sessions"]:
         if method == "GET":
             return sessions_list()
         if method == "POST":
             return sessions_create(body)
 
-    # ── /sessions/{id} ─────────────────────────────────────────
+    # /sessions/{id}
     if len(parts) == 2 and parts[0] == "sessions":
-        sid = parts[1]
         if method == "DELETE":
-            return sessions_delete(sid)
+            return sessions_delete(parts[1])
 
-    # ── /sessions/{id}/messages ────────────────────────────────
+    # /sessions/{id}/messages
     if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "messages":
         sid = parts[1]
         if method == "GET":
@@ -140,20 +109,19 @@ def route(event: dict) -> dict:
         if method == "POST":
             return messages_create(sid, body)
 
-    # ── /facts ─────────────────────────────────────────────────
+    # /facts
     if parts == ["facts"]:
         if method == "GET":
             return facts_list(qs)
         if method == "POST":
             return facts_create(body)
 
-    # ── /facts/{id} ────────────────────────────────────────────
+    # /facts/{id}
     if len(parts) == 2 and parts[0] == "facts":
-        fid = parts[1]
         if method == "DELETE":
-            return facts_delete(fid)
+            return facts_delete(parts[1])
 
-    # ── /settings ──────────────────────────────────────────────
+    # /settings
     if parts == ["settings"]:
         if method == "GET":
             return settings_get()
@@ -167,54 +135,73 @@ def route(event: dict) -> dict:
 
 def sessions_list() -> dict:
     con = get_db()
-    rows = con.execute("""
-        SELECT s.id, s.title, s.created_at, s.updated_at,
-               (SELECT content FROM messages WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) AS preview
-        FROM sessions s
-        ORDER BY s.updated_at DESC
-    """).fetchall()
-    con.close()
-    return ok([dict(r) for r in rows])
+    try:
+        with con.cursor() as cur:
+            cur.execute("""
+                SELECT s.id, s.title, s.created_at, s.updated_at,
+                       (SELECT content FROM messages
+                        WHERE session_id = s.id
+                        ORDER BY created_at DESC LIMIT 1) AS preview
+                FROM sessions s
+                ORDER BY s.updated_at DESC
+            """)
+            rows = rows_to_list(cur)
+        con.commit()
+        return ok(rows)
+    finally:
+        con.close()
 
 
 def sessions_create(body: dict) -> dict:
     sid = str(uuid.uuid4())
     ts = now_iso()
     title = body.get("title", "Новый диалог")
+    welcome = "Готов к работе. Задайте вопрос по анализу данных или деловому решению."
     con = get_db()
-    con.execute(
-        "INSERT INTO sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-        (sid, title, ts, ts),
-    )
-    # Приветственное сообщение ассистента
-    con.execute(
-        "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), sid, "assistant",
-         "Готов к работе. Задайте вопрос по анализу данных или деловому решению.", ts),
-    )
-    con.commit()
-    con.close()
-    return ok({"id": sid, "title": title, "created_at": ts, "updated_at": ts}, 201)
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "INSERT INTO sessions (id, title, created_at, updated_at) VALUES (%s, %s, %s, %s)",
+                (sid, title, ts, ts),
+            )
+            cur.execute(
+                "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (str(uuid.uuid4()), sid, "assistant", welcome, ts),
+            )
+        con.commit()
+        return ok({"id": sid, "title": title, "created_at": ts, "updated_at": ts}, 201)
+    finally:
+        con.close()
 
 
 def sessions_delete(sid: str) -> dict:
     con = get_db()
-    con.execute("DELETE FROM sessions WHERE id = ?", (sid,))
-    con.commit()
-    con.close()
-    return ok({"deleted": sid})
+    try:
+        with con.cursor() as cur:
+            cur.execute("DELETE FROM messages WHERE session_id = %s", (sid,))
+            deleted_msgs = cur.rowcount
+            cur.execute("DELETE FROM sessions WHERE id = %s", (sid,))
+        con.commit()
+        return ok({"deleted": sid, "messages_deleted": deleted_msgs})
+    finally:
+        con.close()
 
 
 # ── Messages ───────────────────────────────────────────────────
 
 def messages_list(session_id: str) -> dict:
     con = get_db()
-    rows = con.execute(
-        "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC",
-        (session_id,),
-    ).fetchall()
-    con.close()
-    return ok([dict(r) for r in rows])
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "SELECT id, session_id, role, content, created_at FROM messages WHERE session_id = %s ORDER BY created_at ASC",
+                (session_id,),
+            )
+            rows = rows_to_list(cur)
+        con.commit()
+        return ok(rows)
+    finally:
+        con.close()
 
 
 def messages_create(session_id: str, body: dict) -> dict:
@@ -227,34 +214,33 @@ def messages_create(session_id: str, body: dict) -> dict:
 
     mid = str(uuid.uuid4())
     ts = now_iso()
-
     con = get_db()
-    # Проверяем что сессия существует
-    row = con.execute("SELECT id FROM sessions WHERE id = ?", (session_id,)).fetchone()
-    if not row:
+    try:
+        with con.cursor() as cur:
+            cur.execute("SELECT id FROM sessions WHERE id = %s", (session_id,))
+            if not cur.fetchone():
+                return err("Session not found", 404)
+
+            cur.execute(
+                "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (mid, session_id, role, content, ts),
+            )
+
+            if role == "user":
+                new_title = content[:40] + ("..." if len(content) > 40 else "")
+                cur.execute(
+                    "UPDATE sessions SET updated_at = %s, title = %s WHERE id = %s",
+                    (ts, new_title, session_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE sessions SET updated_at = %s WHERE id = %s",
+                    (ts, session_id),
+                )
+        con.commit()
+        return ok({"id": mid, "session_id": session_id, "role": role, "content": content, "created_at": ts}, 201)
+    finally:
         con.close()
-        return err("Session not found", 404)
-
-    con.execute(
-        "INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
-        (mid, session_id, role, content, ts),
-    )
-
-    # Обновляем updated_at сессии и при необходимости заголовок
-    title_update = ""
-    if role == "user":
-        new_title = content[:40] + ("..." if len(content) > 40 else "")
-        title_update = new_title
-        con.execute(
-            "UPDATE sessions SET updated_at = ?, title = ? WHERE id = ?",
-            (ts, new_title, session_id),
-        )
-    else:
-        con.execute("UPDATE sessions SET updated_at = ? WHERE id = ?", (ts, session_id))
-
-    con.commit()
-    con.close()
-    return ok({"id": mid, "session_id": session_id, "role": role, "content": content, "created_at": ts}, 201)
 
 
 # ── Facts ──────────────────────────────────────────────────────
@@ -263,29 +249,39 @@ def facts_list(qs: dict) -> dict:
     category = qs.get("category", "")
     q = qs.get("q", "")
     try:
-        limit = int(qs.get("limit", 100))
+        limit = int(qs.get("limit", 200))
     except Exception:
-        limit = 100
+        limit = 200
 
-    con = get_db()
-    sql = "SELECT * FROM facts WHERE 1=1"
+    conditions = []
     params: list = []
+
     if category and category != "Все":
-        sql += " AND category = ?"
+        conditions.append("category = %s")
         params.append(category)
     if q:
-        sql += " AND text LIKE ?"
+        conditions.append("text ILIKE %s")
         params.append(f"%{q}%")
-    sql += " ORDER BY created_at DESC LIMIT ?"
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     params.append(limit)
 
-    rows = con.execute(sql, params).fetchall()
-    con.close()
-    return ok([dict(r) for r in rows])
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                f"SELECT id, text, category, source, created_at, updated_at FROM facts {where} ORDER BY created_at DESC LIMIT %s",
+                params,
+            )
+            rows = rows_to_list(cur)
+        con.commit()
+        return ok(rows)
+    finally:
+        con.close()
 
 
 def facts_create(body: dict) -> dict:
-    text = body.get("text", "").strip() or body.get("content", "").strip()
+    text = (body.get("text") or body.get("content") or "").strip()
     if not text:
         return err("text is required")
     category = body.get("category", "Другое")
@@ -294,35 +290,47 @@ def facts_create(body: dict) -> dict:
     ts = now_iso()
 
     con = get_db()
-    con.execute(
-        "INSERT INTO facts (id, text, category, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (fid, text, category, source, ts, ts),
-    )
-    con.commit()
-    con.close()
-    return ok({"id": fid, "text": text, "category": category, "source": source, "created_at": ts}, 201)
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "INSERT INTO facts (id, text, category, source, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                (fid, text, category, source, ts, ts),
+            )
+        con.commit()
+        return ok({"id": fid, "text": text, "category": category, "source": source, "created_at": ts, "updated_at": ts}, 201)
+    finally:
+        con.close()
 
 
 def facts_delete(fid: str) -> dict:
     con = get_db()
-    con.execute("DELETE FROM facts WHERE id = ?", (fid,))
-    con.commit()
-    con.close()
-    return ok({"deleted": fid})
+    try:
+        with con.cursor() as cur:
+            cur.execute("DELETE FROM facts WHERE id = %s", (fid,))
+        con.commit()
+        return ok({"deleted": fid})
+    finally:
+        con.close()
 
 
 # ── Settings ───────────────────────────────────────────────────
 
 def settings_get() -> dict:
     con = get_db()
-    row = con.execute("SELECT * FROM settings WHERE id = 1").fetchone()
-    con.close()
-    d = dict(row)
     try:
-        d["toggles"] = json.loads(d.get("toggles_json", "{}"))
-    except Exception:
-        d["toggles"] = {}
-    return ok(d)
+        with con.cursor() as cur:
+            cur.execute("SELECT id, base_url, api_key, model, temperature, max_tokens, system_prompt, toggles_json FROM settings WHERE id = 1")
+            row = row_to_dict(cur)
+        con.commit()
+        if not row:
+            return err("Settings not found", 404)
+        try:
+            row["toggles"] = json.loads(row.get("toggles_json", "{}"))
+        except Exception:
+            row["toggles"] = {}
+        return ok(row)
+    finally:
+        con.close()
 
 
 def settings_save(body: dict) -> dict:
@@ -331,35 +339,35 @@ def settings_save(body: dict) -> dict:
     toggles_json = json.dumps(toggles)
 
     con = get_db()
-    con.execute("""
-        UPDATE settings SET
-            base_url = ?,
-            api_key = ?,
-            model = ?,
-            temperature = ?,
-            max_tokens = ?,
-            system_prompt = ?,
-            toggles_json = ?
-        WHERE id = 1
-    """, (
-        body.get("base_url", "https://api.openai.com/v1"),
-        body.get("api_key", ""),
-        body.get("model", "gpt-4o"),
-        float(body.get("temperature", 0.7)),
-        int(body.get("max_tokens", 2048)),
-        body.get("system_prompt", ""),
-        toggles_json,
-    ))
-    con.commit()
-    con.close()
-    return ok({"saved": True})
+    try:
+        with con.cursor() as cur:
+            cur.execute("""
+                UPDATE settings SET
+                    base_url = %s,
+                    api_key = %s,
+                    model = %s,
+                    temperature = %s,
+                    max_tokens = %s,
+                    system_prompt = %s,
+                    toggles_json = %s
+                WHERE id = 1
+            """, (
+                body.get("base_url", "https://api.openai.com/v1"),
+                body.get("api_key", ""),
+                body.get("model", "gpt-4o"),
+                float(body.get("temperature", 0.7)),
+                int(body.get("max_tokens", 2048)),
+                body.get("system_prompt", ""),
+                toggles_json,
+            ))
+        con.commit()
+        return ok({"saved": True})
+    finally:
+        con.close()
 
 
 # ── Entry point ────────────────────────────────────────────────
 
-init_db()
-
-
 def handler(event: dict, context) -> dict:
-    """Персональный ассистент: REST API для сессий, сообщений, фактов и настроек."""
+    """Персональный ассистент: REST API — сессии, сообщения, факты, настройки. БД: PostgreSQL."""
     return route(event)
