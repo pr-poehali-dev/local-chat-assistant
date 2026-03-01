@@ -33,6 +33,8 @@ export default function Index() {
     activeSessionId,
     facts,
     config,
+    loading,
+    appError,
     isThinking,
     createSession,
     selectSession,
@@ -53,8 +55,46 @@ export default function Index() {
   };
 
   const connected = !!config.apiKey && !!config.baseUrl;
-
   const contextFacts = facts.slice(0, 4);
+
+  // Если сессий нет — создаём первую автоматически
+  const [autoCreating, setAutoCreating] = useState(false);
+  if (!loading && !appError && sessions.length === 0 && !autoCreating) {
+    setAutoCreating(true);
+    createSession().finally(() => setAutoCreating(false));
+  }
+
+  if (loading || (sessions.length === 0 && !appError) || autoCreating) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="flex gap-1.5 justify-center mb-3">
+            <span className="thinking-dot w-2 h-2 bg-foreground rounded-full inline-block" />
+            <span className="thinking-dot w-2 h-2 bg-foreground rounded-full inline-block" />
+            <span className="thinking-dot w-2 h-2 bg-foreground rounded-full inline-block" />
+          </div>
+          <p className="text-sm text-muted-foreground font-mono">Загрузка данных...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (appError) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="text-center max-w-sm px-6">
+          <Icon name="AlertCircle" size={32} />
+          <p className="mt-3 text-sm font-medium">{appError}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-foreground text-background text-xs font-medium hover:opacity-80"
+          >
+            Попробовать снова
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
