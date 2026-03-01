@@ -9,11 +9,11 @@
       "bodyMatcher": "partial"
     },
     {
-      "name": "GET facts relevant — returns array",
+      "name": "GET facts profile — returns profile object",
       "method": "GET",
-      "path": "/?r=facts&a=relevant&q=компания+выручка&limit=5",
+      "path": "/?r=facts&a=profile",
       "expectedStatus": 200,
-      "expectedBody": [],
+      "expectedBody": {"stats": {}},
       "bodyMatcher": "partial"
     }
   ]

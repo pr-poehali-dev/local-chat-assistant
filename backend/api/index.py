@@ -157,6 +157,8 @@ def route(event: dict) -> dict:
             return facts_profile(qs)
         if a == "create" or (not a and method == "POST"):
             return facts_create(body)
+        if a == "update":
+            return facts_update(rid, body)
         if a == "delete" or (not a and method == "DELETE"):
             return facts_delete(rid)
 
@@ -589,6 +591,36 @@ def facts_create(body: dict) -> dict:
         con.commit()
         return ok({"id": fid, "text": text, "category": category, "subcategory": subcategory,
                    "source": source, "created_at": ts, "updated_at": ts}, 201)
+    finally:
+        con.close()
+
+
+def facts_update(fid: str, body: dict) -> dict:
+    if not fid:
+        return err("id required")
+    fields, params = [], []
+    if "text" in body:
+        text = body["text"].strip()
+        if text:
+            fields.append("text = %s"); params.append(text)
+    if "category" in body:
+        fields.append("category = %s"); params.append(body["category"])
+    if "subcategory" in body:
+        raw = (body["subcategory"] or "").strip()
+        sub = re.sub(r"\s+", " ", raw)[:32].title() if raw else None
+        fields.append("subcategory = %s"); params.append(sub)
+    if not fields:
+        return err("nothing to update")
+    fields.append("updated_at = %s"); params.append(now_iso())
+    params.append(fid)
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(f"UPDATE facts SET {', '.join(fields)} WHERE id = %s", params)
+            if cur.rowcount == 0:
+                return err("fact not found", 404)
+        con.commit()
+        return ok({"updated": fid})
     finally:
         con.close()
 

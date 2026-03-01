@@ -38,6 +38,30 @@ export interface LLMConfig {
   topFacts: boolean;
 }
 
+const CONSOLIDATION_SYSTEM = `You are a memory curator for a personal AI assistant.
+You receive all facts stored about the user. Your job: restructure, deduplicate, and improve them.
+
+Return ONLY valid JSON (no markdown):
+{
+  "operations": [
+    {"op": "update", "id": "...", "category": "...", "subcategory": "...", "text": "..."},
+    {"op": "delete", "id": "..."},
+    {"op": "merge", "keep_id": "...", "delete_ids": ["..."], "text": "..."}
+  ],
+  "summary": "brief description of what was done"
+}
+
+Rules:
+- Merge near-duplicate facts (same meaning, different wording) → keep best phrasing
+- Split overcrowded subcategories if needed, create new descriptive ones
+- Rename vague subcategories (null/"Общее") → give them proper names based on content
+- Correct wrong category assignments
+- Delete facts that are clearly outdated, trivial or contradicted by better facts
+- Keep atomic facts (one fact = one sentence)
+- Preserve all IDs exactly as given
+- If nothing to improve → return {"operations":[], "summary":"All facts look good"}
+- Available categories: О компании, Финансы, Команда, Рынок, Другое`;
+
 const MEMORY_GATE_SYSTEM = `You are a memory gate for a personal AI assistant.
 Decide whether this conversation reveals facts worth storing long-term.
 Return ONLY valid JSON (no markdown):
@@ -202,6 +226,70 @@ export function useChatStore() {
     },
     [sessions, loadSessionMessages]
   );
+
+  const runConsolidation = useCallback(async (): Promise<string> => {
+    if (!config.apiKey || !config.baseUrl) return "LLM не подключён";
+    if (facts.length === 0) return "База знаний пуста — нечего структурировать";
+
+    const factsList = facts.map((f) =>
+      `{"id":"${f.id}","category":"${f.category}","subcategory":"${f.subcategory ?? ""}","text":"${f.content}"}`
+    ).join("\n");
+
+    const res = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: 0.0,
+        max_tokens: 2048,
+        messages: [
+          { role: "system", content: CONSOLIDATION_SYSTEM },
+          { role: "user", content: `Here are all facts about the user:\n\n${factsList}` },
+        ],
+      }),
+    });
+
+    if (!res.ok) throw new Error(`LLM error ${res.status}`);
+    const data = await res.json();
+    const raw: string = data?.choices?.[0]?.message?.content ?? "";
+
+    let result: { operations: Array<{ op: string; id?: string; keep_id?: string; delete_ids?: string[]; text?: string; category?: string; subcategory?: string }>; summary: string };
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      result = JSON.parse(match ? match[0] : raw);
+    } catch {
+      throw new Error("Не удалось разобрать ответ LLM");
+    }
+
+    let applied = 0;
+    for (const op of result.operations ?? []) {
+      try {
+        if (op.op === "update" && op.id) {
+          await api.facts.update(op.id, { text: op.text, category: op.category, subcategory: op.subcategory });
+          applied++;
+        } else if (op.op === "delete" && op.id) {
+          await api.facts.delete(op.id);
+          applied++;
+        } else if (op.op === "merge" && op.keep_id) {
+          if (op.text || op.category || op.subcategory) {
+            await api.facts.update(op.keep_id, { text: op.text, category: op.category, subcategory: op.subcategory });
+          }
+          for (const did of op.delete_ids ?? []) {
+            await api.facts.delete(did);
+          }
+          applied++;
+        }
+      } catch (e) {
+        console.warn("[CONSOLIDATION] op failed", op, e);
+      }
+    }
+
+    // Обновляем список фактов
+    const freshFacts = await api.facts.list();
+    setFacts(freshFacts.map(apiFactToFact));
+
+    return `${result.summary} (операций: ${applied})`;
+  }, [config, facts]);
 
   const runMemoryGate = useCallback(async (userMsg: string, assistantMsg: string, currentFacts: Fact[]) => {
     if (!config.autoExtract || !config.apiKey || !config.baseUrl) return;
@@ -500,5 +588,6 @@ export function useChatStore() {
     addFact,
     deleteFact,
     saveConfig,
+    runConsolidation,
   };
 }

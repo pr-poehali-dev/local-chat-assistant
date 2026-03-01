@@ -42,6 +42,7 @@ export default function Index() {
     addFact,
     deleteFact,
     saveConfig,
+    runConsolidation,
   } = store;
 
   const handleNewSession = () => {
@@ -268,7 +269,7 @@ export default function Index() {
             </header>
             <div className="flex-1 overflow-hidden">
               {activeTab === "facts" && (
-                <FactsPanel facts={facts} onAdd={addFact} onDelete={deleteFact} onProfileCommand={handleProfileCommand} />
+                <FactsPanel facts={facts} onAdd={addFact} onDelete={deleteFact} onProfileCommand={handleProfileCommand} onConsolidate={runConsolidation} />
               )}
               {activeTab === "settings" && (
                 <SettingsPanel config={config} onSave={saveConfig} />

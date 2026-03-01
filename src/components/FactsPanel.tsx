@@ -9,13 +9,30 @@ interface FactsPanelProps {
   onAdd: (content: string, category: string) => void;
   onDelete: (id: string) => void;
   onProfileCommand?: () => void;
+  onConsolidate?: () => Promise<string>;
 }
 
-export default function FactsPanel({ facts, onAdd, onDelete, onProfileCommand }: FactsPanelProps) {
+export default function FactsPanel({ facts, onAdd, onDelete, onProfileCommand, onConsolidate }: FactsPanelProps) {
   const [newFact, setNewFact] = useState("");
   const [newCategory, setNewCategory] = useState("О компании");
   const [filter, setFilter] = useState("Все");
   const [isAdding, setIsAdding] = useState(false);
+  const [consolidating, setConsolidating] = useState(false);
+  const [consolidateResult, setConsolidateResult] = useState<string | null>(null);
+
+  const handleConsolidate = async () => {
+    if (!onConsolidate) return;
+    setConsolidating(true);
+    setConsolidateResult(null);
+    try {
+      const result = await onConsolidate();
+      setConsolidateResult(result);
+    } catch (e) {
+      setConsolidateResult("Ошибка структурирования");
+    } finally {
+      setConsolidating(false);
+    }
+  };
 
   const handleAdd = () => {
     const text = newFact.trim();
@@ -37,7 +54,7 @@ export default function FactsPanel({ facts, onAdd, onDelete, onProfileCommand }:
               {facts.length} фактов · подмешиваются в контекст
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             {onProfileCommand && (
               <button
                 onClick={onProfileCommand}
@@ -46,6 +63,17 @@ export default function FactsPanel({ facts, onAdd, onDelete, onProfileCommand }:
               >
                 <Icon name="User" size={13} />
                 Профиль
+              </button>
+            )}
+            {onConsolidate && facts.length > 0 && (
+              <button
+                onClick={handleConsolidate}
+                disabled={consolidating}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border hover:bg-secondary transition-colors disabled:opacity-40"
+                title="LLM структурирует, объединит дубли и переименует разделы"
+              >
+                <Icon name={consolidating ? "Loader" : "Sparkles"} size={13} />
+                {consolidating ? "Структурирую..." : "Структурировать"}
               </button>
             )}
             <button
@@ -59,6 +87,13 @@ export default function FactsPanel({ facts, onAdd, onDelete, onProfileCommand }:
             </button>
           </div>
         </div>
+
+        {consolidateResult && (
+          <div className="mt-3 px-3 py-2 border border-border bg-secondary text-xs text-muted-foreground flex items-start gap-2 animate-fade-in">
+            <Icon name="CheckCircle" size={13} className="flex-shrink-0 mt-0.5" />
+            <span>{consolidateResult}</span>
+          </div>
+        )}
 
         {isAdding && (
           <div className="mt-3 space-y-2 animate-slide-up border border-border p-3">
