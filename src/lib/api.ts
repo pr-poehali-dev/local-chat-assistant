@@ -1,9 +1,21 @@
 const BASE = "https://functions.poehali.dev/5a867386-9601-4226-87b2-b0486113195c";
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
-    ...options,
+// Все запросы идут на корневой URL с query-параметрами ?r=resource&a=action&id=...
+async function request<T>(
+  resource: string,
+  action: string,
+  options: RequestInit & { id?: string; qs?: Record<string, string> } = {}
+): Promise<T> {
+  const params = new URLSearchParams({ r: resource, a: action });
+  if (options.id) params.set("id", options.id);
+  if (options.qs) {
+    Object.entries(options.qs).forEach(([k, v]) => { if (v) params.set(k, v); });
+  }
+  const url = `${BASE}?${params.toString()}`;
+  const { id: _id, qs: _qs, ...fetchOptions } = options;
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json", ...(fetchOptions.headers ?? {}) },
+    ...fetchOptions,
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
@@ -49,47 +61,51 @@ export interface ApiSettings {
   toggles?: { autoExtract: boolean; antiDuplicates: boolean; topFacts: boolean };
 }
 
-// ── Sessions ───────────────────────────────────────────────────
+// ── API ────────────────────────────────────────────────────────
 
 export const api = {
   sessions: {
-    list: () => request<ApiSession[]>("/sessions"),
+    list: () =>
+      request<ApiSession[]>("sessions", "list"),
     create: (title = "Новый диалог") =>
-      request<ApiSession>("/sessions", { method: "POST", body: JSON.stringify({ title }) }),
+      request<ApiSession>("sessions", "create", {
+        method: "POST",
+        body: JSON.stringify({ title }),
+      }),
     delete: (id: string) =>
-      request<{ deleted: string }>(`/sessions/${id}`, { method: "DELETE" }),
+      request<{ deleted: string }>("sessions", "delete", { method: "DELETE", id }),
   },
 
   messages: {
     list: (sessionId: string) =>
-      request<ApiMessage[]>(`/sessions/${sessionId}/messages`),
+      request<ApiMessage[]>("messages", "list", { id: sessionId }),
     create: (sessionId: string, role: string, content: string) =>
-      request<ApiMessage>(`/sessions/${sessionId}/messages`, {
+      request<ApiMessage>("messages", "create", {
         method: "POST",
+        id: sessionId,
         body: JSON.stringify({ role, content }),
       }),
   },
 
   facts: {
     list: (params?: { category?: string; q?: string; limit?: number }) => {
-      const qs = new URLSearchParams();
-      if (params?.category && params.category !== "Все") qs.set("category", params.category);
-      if (params?.q) qs.set("q", params.q);
-      if (params?.limit) qs.set("limit", String(params.limit));
-      const query = qs.toString() ? `?${qs.toString()}` : "";
-      return request<ApiFact[]>(`/facts${query}`);
+      const qs: Record<string, string> = {};
+      if (params?.category && params.category !== "Все") qs.category = params.category;
+      if (params?.q) qs.q = params.q;
+      if (params?.limit) qs.limit = String(params.limit);
+      return request<ApiFact[]>("facts", "list", { qs });
     },
     create: (text: string, category: string, source: "manual" | "auto" = "manual") =>
-      request<ApiFact>("/facts", {
+      request<ApiFact>("facts", "create", {
         method: "POST",
         body: JSON.stringify({ text, category, source }),
       }),
     delete: (id: string) =>
-      request<{ deleted: string }>(`/facts/${id}`, { method: "DELETE" }),
+      request<{ deleted: string }>("facts", "delete", { method: "DELETE", id }),
   },
 
   settings: {
-    get: () => request<ApiSettings>("/settings"),
+    get: () => request<ApiSettings>("settings", "get"),
     save: (data: {
       base_url: string;
       api_key: string;
@@ -99,7 +115,7 @@ export const api = {
       system_prompt: string;
       toggles: { autoExtract: boolean; antiDuplicates: boolean; topFacts: boolean };
     }) =>
-      request<{ saved: boolean }>("/settings", {
+      request<{ saved: boolean }>("settings", "save", {
         method: "POST",
         body: JSON.stringify(data),
       }),
