@@ -122,9 +122,9 @@ export default function FactsPanel({ facts, onAdd, onDelete }: FactsPanelProps) 
                   {fact.subcategory}
                 </span>
               )}
-              <span className={`text-[11px] font-mono flex items-center gap-1 ${fact.source === "auto" ? "text-blue-500" : "text-muted-foreground"}`}>
-                <Icon name={fact.source === "auto" ? "Sparkles" : "User"} size={10} />
-                {fact.source === "auto" ? "авто" : "вручную"}
+              <span className={`text-[11px] font-mono flex items-center gap-1 ${fact.source === "memory_gate" ? "text-violet-500" : fact.source === "auto" ? "text-blue-500" : "text-muted-foreground"}`}>
+                <Icon name={fact.source === "memory_gate" ? "Shield" : fact.source === "auto" ? "Sparkles" : "User"} size={10} />
+                {fact.source === "memory_gate" ? "gate" : fact.source === "auto" ? "авто" : "вручную"}
               </span>
               <span className="text-[11px] font-mono text-muted-foreground ml-auto">{fact.addedAt}</span>
             </div>

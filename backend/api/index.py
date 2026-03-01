@@ -38,17 +38,30 @@ CATEGORY_MAP = {
 }
 VALID_CATEGORIES = {"О компании", "Финансы", "Команда", "Рынок", "Другое"}
 
-EXTRACTOR_SYSTEM = (
-    "You extract long-term user facts for a personal knowledge base. "
-    "Return ONLY valid JSON in this exact schema, no markdown, no commentary:\n"
-    '{"facts":[{"text":"...","category":"profile|preferences|projects|constraints|other","subcategory":"...","confidence":0.0}]}\n'
+MEMORY_GATE_SYSTEM = (
+    "You are a memory gate for a personal AI assistant. "
+    "Your job: decide whether this conversation exchange reveals facts worth storing long-term.\n\n"
+    "Return ONLY valid JSON, no markdown:\n"
+    '{"should_write":false,"reason":"...","facts":[]}\n\n'
+    "SAVE facts that are:\n"
+    "- Stable preferences (work style, likes/dislikes, communication style)\n"
+    "- Permanent business parameters (team size, metrics, product, customer segment, pricing)\n"
+    "- Explicit decisions / policies ('we always do X', 'we never do Y')\n"
+    "- Personal context about activity (role, projects, goals, industry)\n\n"
+    "DO NOT save:\n"
+    "- One-time actions ('today I did...', 'we just launched...')\n"
+    "- Draft thoughts or hypotheticals\n"
+    "- Anything already in EXISTING FACTS (avoid duplicates)\n"
+    "- Assistant suggestions or questions\n"
+    "- Greetings, small talk\n\n"
     "Rules:\n"
-    "- fact must be stable, user-specific, reusable later.\n"
-    "- Do NOT extract ephemeral details (today, this chat), assistant suggestions, or greetings.\n"
-    "- One fact = one short atomic sentence. Confidence 0..1.\n"
-    "- subcategory: a short stable section name (1-3 words) such as: "
-    "'Продукты', 'Клиенты', 'Финансы', 'Команда', 'Маркетинг', 'Операции', 'Риски', 'Юнит-экономика', 'Процессы'. "
-    "If unsure — use 'Общее'."
+    "- Max 2 facts per call. If nothing qualifies → should_write=false, facts=[]\n"
+    "- When in doubt → should_write=false\n"
+    "- Each fact: text (short atomic sentence), "
+    "category (О компании|Финансы|Команда|Рынок|Другое), "
+    "subcategory (1-3 words: Продукты/Клиенты/Команда/Маркетинг/Операции/Риски/Юнит-экономика/Процессы/Общее), "
+    "confidence 0..1\n"
+    "- reason: one short sentence explaining your decision (for logs only)"
 )
 
 SUBCATEGORY_LIMIT = 20
@@ -267,12 +280,26 @@ def messages_create(session_id: str, body: dict) -> dict:
                 )
         con.commit()
 
-        # Авто-извлечение фактов после ответа ассистента
+        # Memory gate после ответа ассистента
         if role == "assistant":
             try:
-                _maybe_extract_facts(session_id, content)
+                # Берём последнее user-сообщение из БД
+                gate_con = get_db()
+                try:
+                    with gate_con.cursor() as cur:
+                        cur.execute(
+                            "SELECT content FROM messages WHERE session_id = %s AND role = 'user' "
+                            "ORDER BY created_at DESC LIMIT 1",
+                            (session_id,),
+                        )
+                        row = cur.fetchone()
+                    gate_con.commit()
+                finally:
+                    gate_con.close()
+                user_msg = row[0] if row else ""
+                _memory_gate(session_id, user_msg, content)
             except Exception as ex:
-                print(f"[WARN] fact extractor failed silently: {ex}")
+                print(f"[GATE] failed silently: {ex}")
 
         return ok({"id": mid, "session_id": session_id, "role": role, "content": content, "created_at": ts}, 201)
     finally:
@@ -316,7 +343,7 @@ def _llm_call(base_url: str, api_key: str, model: str, messages: list) -> str:
     return data["choices"][0]["message"]["content"]
 
 
-def _maybe_extract_facts(session_id: str, assistant_content: str) -> None:
+def _memory_gate(session_id: str, user_msg: str, assistant_msg: str) -> None:
     con = get_db()
     try:
         with con.cursor() as cur:
@@ -338,31 +365,7 @@ def _maybe_extract_facts(session_id: str, assistant_content: str) -> None:
         if not base_url or not api_key:
             return
 
-        # Контекст: последние 5 сообщений
-        with con.cursor() as cur:
-            cur.execute(
-                "SELECT role, content FROM messages WHERE session_id = %s "
-                "ORDER BY created_at DESC LIMIT 5",
-                (session_id,),
-            )
-            rows = list(reversed(cur.fetchall()))
-        if not rows:
-            return
-
-        dialog_text = "\n".join(f"{r[0].upper()}: {r[1]}" for r in rows)
-        raw = _llm_call(base_url, api_key, model, [
-            {"role": "system", "content": EXTRACTOR_SYSTEM},
-            {"role": "user", "content": f"Extract facts from this conversation:\n\n{dialog_text}"},
-        ])
-        print(f"[INFO] extractor raw JSON: {raw[:400]}")
-
-        try:
-            candidates = json.loads(raw).get("facts", [])
-        except Exception:
-            print(f"[WARN] extractor: invalid JSON: {raw[:200]}")
-            return
-
-        # Существующие факты для дедупликации + текущие subcategory
+        # Релевантные факты для контекста gate (анти-дуп)
         with con.cursor() as cur:
             cur.execute("SELECT text, category, subcategory FROM facts")
             existing_rows = cur.fetchall()
@@ -373,14 +376,44 @@ def _maybe_extract_facts(session_id: str, assistant_content: str) -> None:
             if sc:
                 existing_subcats.add(sc)
 
+        existing_sample = "\n".join(
+            f"- [{c}] {t}" for t, c, _ in existing_rows[:8]
+        ) or "none"
+
+        user_content = (
+            f"USER: {user_msg}\n\n"
+            f"ASSISTANT: {assistant_msg}\n\n"
+            f"EXISTING FACTS (do not duplicate):\n{existing_sample}"
+        )
+
+        raw = _llm_call(base_url, api_key, model, [
+            {"role": "system", "content": MEMORY_GATE_SYSTEM},
+            {"role": "user", "content": user_content},
+        ])
+        print(f"[GATE] raw: {raw[:500]}")
+
+        try:
+            result = json.loads(raw)
+        except Exception:
+            print(f"[GATE] invalid JSON: {raw[:200]}")
+            return
+
+        should_write = result.get("should_write", False)
+        reason = result.get("reason", "—")
+        candidates = result.get("facts", []) or []
+        print(f"[GATE] should_write={should_write} | reason: {reason}")
+
+        if not should_write or not candidates:
+            return
+
         ts = now_iso()
         inserted = 0
-        for item in (candidates or []):
+        for item in candidates[:2]:
             if not isinstance(item, dict):
                 continue
             text = (item.get("text") or "").strip()
             confidence = float(item.get("confidence", 0))
-            raw_cat = (item.get("category") or "other").lower().strip()
+            raw_cat = (item.get("category") or "другое").lower().strip()
             raw_sub = (item.get("subcategory") or "").strip()
             if not text or confidence < 0.6:
                 continue
@@ -388,7 +421,7 @@ def _maybe_extract_facts(session_id: str, assistant_content: str) -> None:
             category = CATEGORY_MAP.get(raw_cat, "Другое")
             norm = _normalize(text)
             if norm in existing.get(category, set()):
-                print(f"[INFO] extractor: dup skip [{category}]: {text[:50]}")
+                print(f"[GATE] dup skip [{category}]: {text[:50]}")
                 continue
 
             subcategory = _normalize_subcategory(raw_sub, existing_subcats)
@@ -397,22 +430,22 @@ def _maybe_extract_facts(session_id: str, assistant_content: str) -> None:
                 cur.execute(
                     "INSERT INTO facts (id, text, category, subcategory, source, created_at, updated_at) "
                     "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    (fid, text, category, subcategory, "auto", ts, ts),
+                    (fid, text, category, subcategory, "memory_gate", ts, ts),
                 )
             con.commit()
             existing.setdefault(category, set()).add(norm)
             existing_subcats.add(subcategory)
             inserted += 1
-            print(f"[INFO] extractor: +fact [{category}/{subcategory}]: {text[:60]}")
+            print(f"[GATE] +fact [{category}/{subcategory}]: {text[:70]}")
 
-        print(f"[INFO] extractor: {inserted} new fact(s) for session {session_id[:8]}")
+        print(f"[GATE] saved {inserted} fact(s) for session {session_id[:8]}")
 
     except urllib.error.HTTPError as e:
-        print(f"[WARN] extractor HTTP {e.code}: {e.read().decode('utf-8', errors='ignore')[:200]}")
+        print(f"[GATE] HTTP {e.code}: {e.read().decode('utf-8', errors='ignore')[:200]}")
     except urllib.error.URLError as e:
-        print(f"[WARN] extractor URL error: {e.reason}")
+        print(f"[GATE] URL error: {e.reason}")
     except Exception as ex:
-        print(f"[WARN] extractor unexpected: {ex}")
+        print(f"[GATE] unexpected: {ex}")
     finally:
         con.close()
 

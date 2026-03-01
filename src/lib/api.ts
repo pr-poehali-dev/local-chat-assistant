@@ -45,7 +45,7 @@ export interface ApiFact {
   text: string;
   category: string;
   subcategory?: string | null;
-  source: "manual" | "auto";
+  source: "manual" | "auto" | "memory_gate";
   created_at: string;
   updated_at?: string;
 }

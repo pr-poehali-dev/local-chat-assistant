@@ -23,7 +23,7 @@ export interface Fact {
   category: string;
   subcategory?: string;
   addedAt: string;
-  source: "manual" | "auto";
+  source: "manual" | "auto" | "memory_gate";
 }
 
 export interface LLMConfig {
