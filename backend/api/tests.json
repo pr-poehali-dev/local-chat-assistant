@@ -7,6 +7,14 @@
       "expectedStatus": 200,
       "expectedBody": {"status": "ok"},
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET facts relevant — returns array",
+      "method": "GET",
+      "path": "/?r=facts&a=relevant&q=компания+выручка&limit=5",
+      "expectedStatus": 200,
+      "expectedBody": [],
+      "bodyMatcher": "partial"
     }
   ]
 }

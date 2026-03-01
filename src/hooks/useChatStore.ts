@@ -213,9 +213,25 @@ export function useChatStore() {
           "⚠️ LLM не подключён. Откройте «Настройки», введите Base URL и API-ключ, нажмите «Сохранить».";
       } else {
         try {
+          let relevantFacts = facts;
+          try {
+            const fetched = await api.facts.relevant(text, 8);
+            if (fetched.length > 0) {
+              relevantFacts = fetched.map((f) => ({
+                id: f.id,
+                content: f.text,
+                category: f.category,
+                addedAt: "",
+                source: f.source,
+              }));
+            }
+          } catch {
+            // fallback: используем локальные факты
+          }
+
           const factContext =
-            facts.length > 0
-              ? `\n\nФакты о пользователе:\n${facts
+            relevantFacts.length > 0
+              ? `\n\nПАМЯТЬ (релевантное):\n${relevantFacts
                   .map((f) => `- [${f.category}] ${f.content}`)
                   .join("\n")}`
               : "";

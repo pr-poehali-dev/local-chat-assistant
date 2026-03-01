@@ -102,6 +102,8 @@ export const api = {
       }),
     delete: (id: string) =>
       request<{ deleted: string }>("facts", "delete", { method: "DELETE", id }),
+    relevant: (q: string, limit = 8) =>
+      request<ApiFact[]>("facts", "relevant", { qs: { q, limit: String(limit) } }),
   },
 
   settings: {

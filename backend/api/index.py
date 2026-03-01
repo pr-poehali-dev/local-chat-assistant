@@ -132,6 +132,8 @@ def route(event: dict) -> dict:
     if r == "facts":
         if a == "list" or (not a and method == "GET"):
             return facts_list(qs)
+        if a == "relevant":
+            return facts_relevant(qs)
         if a == "create" or (not a and method == "POST"):
             return facts_create(body)
         if a == "delete" or (not a and method == "DELETE"):
@@ -426,6 +428,63 @@ def facts_list(qs: dict) -> dict:
                 params,
             )
             rows = rows_to_list(cur)
+        con.commit()
+        return ok(rows)
+    finally:
+        con.close()
+
+
+STOPWORDS = {
+    "и","в","на","с","по","для","от","до","при","не","но","а","это",
+    "что","как","так","же","бы","ли","из","за","под","над","или","то",
+    "the","and","for","with","that","this","from","have","are","was",
+    "were","not","but","you","your","they","their","its","can","will",
+}
+
+
+def _query_words(q: str) -> list:
+    words = re.sub(r"[^\w\s]", " ", q.lower()).split()
+    return [w for w in words if len(w) >= 4 and w not in STOPWORDS]
+
+
+def facts_relevant(qs: dict) -> dict:
+    q = (qs.get("q") or "").strip()
+    raw_limit = qs.get("limit", "8")
+    limit = int(raw_limit) if raw_limit.isdigit() else 8
+
+    con = get_db()
+    try:
+        words = _query_words(q) if q else []
+
+        if words:
+            conditions = " OR ".join(["text ILIKE %s"] * len(words))
+            params = [f"%{w}%" for w in words]
+            with con.cursor() as cur:
+                cur.execute(
+                    f"SELECT id, text, category, source, created_at FROM facts "
+                    f"WHERE {conditions} ORDER BY created_at DESC LIMIT 50",
+                    params,
+                )
+                rows = rows_to_list(cur)
+
+            # Ранжируем по количеству совпавших слов
+            def score(row):
+                t = row["text"].lower()
+                return sum(1 for w in words if w in t)
+
+            rows.sort(key=score, reverse=True)
+            rows = rows[:limit]
+
+        if not words or not rows:
+            # Fallback: последние N фактов
+            with con.cursor() as cur:
+                cur.execute(
+                    "SELECT id, text, category, source, created_at FROM facts "
+                    "ORDER BY updated_at DESC LIMIT %s",
+                    (limit,),
+                )
+                rows = rows_to_list(cur)
+
         con.commit()
         return ok(rows)
     finally:
