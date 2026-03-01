@@ -147,10 +147,23 @@ export default function ChatPanel({
   const isRecording = voiceState === "recording";
   const isProcessing = voiceState === "processing";
 
+  const VISIBLE = 10;
+  const [showAll, setShowAll] = useState(false);
+  const hiddenCount = messages.length > VISIBLE ? messages.length - VISIBLE : 0;
+  const visibleMessages = showAll || hiddenCount === 0 ? messages : messages.slice(-VISIBLE);
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-        {messages.map((msg, i) => (
+        {hiddenCount > 0 && !showAll && (
+          <button
+            onClick={() => setShowAll(true)}
+            className="w-full text-center text-xs text-muted-foreground hover:text-foreground font-mono py-2 border border-border hover:bg-secondary transition-colors"
+          >
+            ↑ показать ещё {hiddenCount} сообщений за сегодня
+          </button>
+        )}
+        {visibleMessages.map((msg, i) => (
           <div
             key={msg.id}
             className="animate-fade-in"
