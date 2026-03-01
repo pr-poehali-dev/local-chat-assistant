@@ -6,17 +6,20 @@ const CATEGORIES = ["О компании", "Финансы", "Команда", "
 
 interface FactsPanelProps {
   facts: Fact[];
+  summaries?: Record<string, string>;
   onAdd: (content: string, category: string) => void;
   onDelete: (id: string) => void;
   onProfileCommand?: () => void;
   onConsolidate?: () => Promise<string>;
+  onSummarize?: () => Promise<string>;
 }
 
-export default function FactsPanel({ facts, onAdd, onDelete, onProfileCommand, onConsolidate }: FactsPanelProps) {
+export default function FactsPanel({ facts, summaries = {}, onAdd, onDelete, onProfileCommand, onConsolidate, onSummarize }: FactsPanelProps) {
   const [newFact, setNewFact] = useState("");
   const [newCategory, setNewCategory] = useState("О компании");
   const [isAdding, setIsAdding] = useState(false);
   const [consolidating, setConsolidating] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
   const [consolidateResult, setConsolidateResult] = useState<string | null>(null);
   const [openCategories, setOpenCategories] = useState<Set<string>>(new Set(["О компании"]));
   const [openSubcategories, setOpenSubcategories] = useState<Set<string>>(new Set());
@@ -32,6 +35,20 @@ export default function FactsPanel({ facts, onAdd, onDelete, onProfileCommand, o
       setConsolidateResult("Ошибка структурирования");
     } finally {
       setConsolidating(false);
+    }
+  };
+
+  const handleSummarize = async () => {
+    if (!onSummarize) return;
+    setSummarizing(true);
+    setConsolidateResult(null);
+    try {
+      const result = await onSummarize();
+      setConsolidateResult(result);
+    } catch {
+      setConsolidateResult("Ошибка резюмирования");
+    } finally {
+      setSummarizing(false);
     }
   };
 
@@ -97,11 +114,21 @@ export default function FactsPanel({ facts, onAdd, onDelete, onProfileCommand, o
             {onConsolidate && facts.length > 0 && (
               <button
                 onClick={handleConsolidate}
-                disabled={consolidating}
+                disabled={consolidating || summarizing}
                 className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border hover:bg-secondary transition-colors disabled:opacity-40"
               >
                 <Icon name={consolidating ? "Loader" : "Sparkles"} size={13} />
                 {consolidating ? "Структурирую..." : "Структурировать"}
+              </button>
+            )}
+            {onSummarize && facts.length > 0 && (
+              <button
+                onClick={handleSummarize}
+                disabled={summarizing || consolidating}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border hover:bg-secondary transition-colors disabled:opacity-40"
+              >
+                <Icon name={summarizing ? "Loader" : "FileText"} size={13} />
+                {summarizing ? "Резюмирую..." : "Резюме"}
               </button>
             )}
             <button
@@ -177,6 +204,11 @@ export default function FactsPanel({ facts, onAdd, onDelete, onProfileCommand, o
 
               {isOpen && (
                 <div className="pb-1">
+                  {summaries[cat] && (
+                    <div className="mx-4 mb-2 px-4 py-3 bg-secondary/50 border border-border text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                      {summaries[cat]}
+                    </div>
+                  )}
                   {subcats.map(([sub, subFacts]) => {
                     const subKey = `${cat}::${sub}`;
                     const subOpen = openSubcategories.has(subKey);

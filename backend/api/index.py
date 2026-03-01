@@ -178,6 +178,12 @@ def route(event: dict) -> dict:
         if a == "save" or (not a and method == "POST"):
             return settings_save(body)
 
+    if r == "summaries":
+        if a == "list" or (not a and method == "GET"):
+            return summaries_list()
+        if a == "save" or (not a and method == "POST"):
+            return summaries_save(body)
+
     return err(f"Unknown r={r} a={a}", 404)
 
 
@@ -796,6 +802,42 @@ def settings_save(body: dict) -> dict:
                 body.get("system_prompt", ""),
                 json.dumps(toggles),
             ))
+        con.commit()
+        return ok({"saved": True})
+    finally:
+        con.close()
+
+
+# ── Category Summaries ─────────────────────────────────────────
+
+def summaries_list() -> dict:
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute("SELECT category, summary, facts_count, updated_at FROM category_summaries ORDER BY category")
+            rows = rows_to_list(cur)
+        con.commit()
+        return ok(rows)
+    finally:
+        con.close()
+
+def summaries_save(body: dict) -> dict:
+    category = body.get("category", "").strip()
+    summary = body.get("summary", "").strip()
+    facts_count = int(body.get("facts_count", 0))
+    if not category or not summary:
+        return err("category and summary required", 400)
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute("""
+                INSERT INTO category_summaries (category, summary, facts_count, updated_at)
+                VALUES (%s, %s, %s, NOW())
+                ON CONFLICT (category) DO UPDATE
+                SET summary = EXCLUDED.summary,
+                    facts_count = EXCLUDED.facts_count,
+                    updated_at = NOW()
+            """, (category, summary, facts_count))
         con.commit()
         return ok({"saved": True})
     finally:

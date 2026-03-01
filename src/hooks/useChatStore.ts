@@ -156,6 +156,7 @@ export function useChatStore() {
   const [loading, setLoading] = useState(true);
   const [appError, setAppError] = useState<string | null>(null);
   const [lastSavedCount, setLastSavedCount] = useState(0);
+  const [summaries, setSummaries] = useState<Record<string, string>>({});
 
   const loadSessionMessages = useCallback(async (sessionId: string) => {
     try {
@@ -174,10 +175,11 @@ export function useChatStore() {
   useEffect(() => {
     async function boot() {
       try {
-        const [apiSessions, apiFacts, apiSettings] = await Promise.all([
+        const [apiSessions, apiFacts, apiSettings, apiSummaries] = await Promise.all([
           api.sessions.list(),
           api.facts.list(),
           api.settings.get(),
+          api.summaries.list().catch(() => []),
         ]);
 
         const sessionsData = apiSessions.map(apiSessionToSession);
@@ -186,7 +188,6 @@ export function useChatStore() {
         if (sessionsData.length > 0) {
           const firstId = sessionsData[0].id;
           setActiveSessionId(firstId);
-          // Загружаем сообщения первой сессии
           const msgs = await api.messages.list(firstId);
           setSessions((prev) =>
             prev.map((s) => (s.id === firstId ? { ...s, messages: msgs.map(apiMsgToMsg) } : s))
@@ -195,6 +196,9 @@ export function useChatStore() {
 
         setFacts(apiFacts.map(apiFactToFact));
         setConfig(apiSettingsToConfig(apiSettings));
+        const summaryMap: Record<string, string> = {};
+        for (const s of apiSummaries) summaryMap[s.category] = s.summary;
+        setSummaries(summaryMap);
       } catch (_) {
         setAppError("Не удалось подключиться к серверу");
       } finally {
@@ -294,6 +298,67 @@ export function useChatStore() {
     setFacts(freshFacts.map(apiFactToFact));
 
     return `${result.summary} (операций: ${applied})`;
+  }, [config, facts]);
+
+  const SUMMARY_SYSTEM = `You are a knowledge base curator. Given a list of facts about a person or their business under one category, write a comprehensive, dense summary that captures ALL important information.
+
+Rules:
+- Write in Russian
+- Preserve all specific details: numbers, names, dates, addresses, URLs
+- Do NOT omit anything that could be useful context
+- Choose the format and length yourself based on the amount of information: few facts → compact, many facts → structured with line breaks or bullet points
+- Do not add introductory phrases like "В данной категории..." — just write the content directly`;
+
+  const runSummaries = useCallback(async (): Promise<string> => {
+    if (!config.apiKey || !config.baseUrl) return "LLM не подключён";
+    if (facts.length === 0) return "Нет фактов для резюмирования";
+
+    const CATEGORIES = ["О компании", "Финансы", "Команда", "Рынок", "Другое"];
+    const byCategory: Record<string, Fact[]> = {};
+    for (const cat of CATEGORIES) byCategory[cat] = [];
+    for (const f of facts) {
+      const cat = f.category || "Другое";
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(f);
+    }
+
+    const newSummaries: Record<string, string> = {};
+    let updated = 0;
+
+    for (const cat of CATEGORIES) {
+      const catFacts = byCategory[cat];
+      if (catFacts.length === 0) continue;
+
+      const factLines = catFacts
+        .map((f) => `- [${f.subcategory || "Общее"}] ${f.content}`)
+        .join("\n");
+
+      const res = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
+        body: JSON.stringify({
+          model: config.model,
+          temperature: 0.2,
+          max_tokens: 800,
+          messages: [
+            { role: "system", content: SUMMARY_SYSTEM },
+            { role: "user", content: `Категория: ${cat}\n\nФакты:\n${factLines}` },
+          ],
+        }),
+      });
+
+      if (!res.ok) continue;
+      const data = await res.json();
+      const text: string = data?.choices?.[0]?.message?.content?.trim() ?? "";
+      if (!text) continue;
+
+      await api.summaries.save(cat, text, catFacts.length).catch(() => null);
+      newSummaries[cat] = text;
+      updated++;
+    }
+
+    setSummaries((prev) => ({ ...prev, ...newSummaries }));
+    return `Обновлено резюме для ${updated} ${updated === 1 ? "категории" : updated < 5 ? "категорий" : "категорий"}`;
   }, [config, facts]);
 
   const runMemoryGate = useCallback(async (userMsg: string, assistantMsg: string, currentFacts: Fact[], cfg = config) => {
@@ -461,12 +526,20 @@ export function useChatStore() {
             }
           }
 
-          const factContext =
-            relevantFacts.length > 0
-              ? `\n\nПАМЯТЬ (релевантное):\n${relevantFacts
-                  .map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.content}`)
-                  .join("\n")}`
-              : "";
+          // Конспекты категорий — общая картина
+          const summaryLines = Object.entries(summaries)
+            .filter(([, s]) => s)
+            .map(([cat, s]) => `### ${cat}\n${s}`)
+            .join("\n\n");
+
+          // Релевантные факты — детали
+          const factLines = relevantFacts.length > 0
+            ? relevantFacts.map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.content}`).join("\n")
+            : "";
+
+          const factContext = summaryLines || factLines
+            ? `\n\n---\nПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ:\n${summaryLines ? `## Конспект по категориям\n${summaryLines}` : ""}${factLines ? `\n\n## Релевантные факты\n${factLines}` : ""}`
+            : "";
 
           const currentMsgs = activeSession?.messages ?? [];
           const history = currentMsgs
@@ -590,6 +663,7 @@ export function useChatStore() {
     activeSession,
     activeSessionId,
     facts,
+    summaries,
     config,
     isThinking,
     loading,
@@ -602,5 +676,6 @@ export function useChatStore() {
     deleteFact,
     saveConfig,
     runConsolidation,
+    runSummaries,
   };
 }

@@ -15,6 +15,14 @@
       "expectedStatus": 200,
       "expectedBody": {"stats": {}},
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "GET summaries list",
+      "method": "GET",
+      "path": "/?r=summaries&a=list",
+      "expectedStatus": 200,
+      "expectedBody": [],
+      "bodyMatcher": "partial"
     }
   ]
 }

@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS category_summaries (
+  id SERIAL PRIMARY KEY,
+  category TEXT NOT NULL UNIQUE,
+  summary TEXT NOT NULL,
+  facts_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

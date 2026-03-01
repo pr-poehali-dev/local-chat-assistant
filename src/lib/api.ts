@@ -128,6 +128,15 @@ export const api = {
       request<{ updated: string }>("facts", "update", { method: "POST", id, body: JSON.stringify(data) }),
   },
 
+  summaries: {
+    list: () => request<Array<{ category: string; summary: string; facts_count: number; updated_at: string }>>("summaries", "list"),
+    save: (category: string, summary: string, facts_count: number) =>
+      request<{ saved: boolean }>("summaries", "save", {
+        method: "POST",
+        body: JSON.stringify({ category, summary, facts_count }),
+      }),
+  },
+
   settings: {
     get: () => request<ApiSettings>("settings", "get"),
     save: (data: {
