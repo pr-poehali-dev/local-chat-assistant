@@ -58,6 +58,29 @@ export default function ChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isThinking]);
 
+  // Push-to-talk: левый Ctrl зажат → запись, отпущен → стоп
+  useEffect(() => {
+    if (!voiceAvailable) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "ControlLeft" && !e.repeat && voiceState === "idle") {
+        _startRecording();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "ControlLeft") {
+        _stopRecording();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [voiceAvailable, voiceState, _startRecording, _stopRecording]);
+
   // Авто-озвучка последнего ответа ассистента
   useEffect(() => {
     if (!autoSpeak || !apiKey || !baseUrl) return;
@@ -252,9 +275,9 @@ export default function ChatPanel({
           </div>
           <div className="flex items-center gap-3">
             {voiceAvailable && (
-              <span className="flex items-center gap-1">
+              <span className={`flex items-center gap-1 ${isRecording ? "text-red-500" : ""}`}>
                 <Icon name="Mic" size={10} />
-                голос
+                {isRecording ? "запись..." : "Ctrl — голос"}
               </span>
             )}
             {model && (
