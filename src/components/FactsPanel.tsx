@@ -1,0 +1,171 @@
+import { useState } from "react";
+import Icon from "@/components/ui/icon";
+
+interface Fact {
+  id: string;
+  content: string;
+  category: string;
+  addedAt: string;
+  source: "manual" | "auto";
+}
+
+const DEMO_FACTS: Fact[] = [
+  {
+    id: "f1",
+    content: "Компания работает в сегменте B2B SaaS, основной рынок — Россия и СНГ",
+    category: "О компании",
+    addedAt: "27 фев",
+    source: "manual",
+  },
+  {
+    id: "f2",
+    content: "Целевая выручка на 2026 год: 120 млн руб. Текущий темп роста: 18% QoQ",
+    category: "Финансы",
+    addedAt: "26 фев",
+    source: "manual",
+  },
+  {
+    id: "f3",
+    content: "Команда: 34 человека, из них 12 в разработке, 8 в продажах",
+    category: "Команда",
+    addedAt: "25 фев",
+    source: "auto",
+  },
+  {
+    id: "f4",
+    content: "Главный конкурент — AmoCRM, основное преимущество — отраслевая специализация",
+    category: "Рынок",
+    addedAt: "24 фев",
+    source: "auto",
+  },
+];
+
+const CATEGORIES = ["Все", "О компании", "Финансы", "Команда", "Рынок", "Другое"];
+
+export default function FactsPanel() {
+  const [facts, setFacts] = useState<Fact[]>(DEMO_FACTS);
+  const [newFact, setNewFact] = useState("");
+  const [newCategory, setNewCategory] = useState("О компании");
+  const [filter, setFilter] = useState("Все");
+  const [isAdding, setIsAdding] = useState(false);
+
+  const handleAdd = () => {
+    const text = newFact.trim();
+    if (!text) return;
+    const fact: Fact = {
+      id: Date.now().toString(),
+      content: text,
+      category: newCategory,
+      addedAt: "сейчас",
+      source: "manual",
+    };
+    setFacts((prev) => [fact, ...prev]);
+    setNewFact("");
+    setIsAdding(false);
+  };
+
+  const handleDelete = (id: string) => {
+    setFacts((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const filtered = filter === "Все" ? facts : facts.filter((f) => f.category === filter);
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-6 py-4 border-b border-border">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-sm font-semibold">База знаний</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{facts.length} фактов · подмешиваются в контекст</p>
+          </div>
+          <button
+            onClick={() => setIsAdding(!isAdding)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
+              isAdding ? "bg-foreground text-background" : "border border-border hover:bg-secondary"
+            }`}
+          >
+            <Icon name={isAdding ? "X" : "Plus"} size={13} />
+            {isAdding ? "Отмена" : "Добавить факт"}
+          </button>
+        </div>
+
+        {isAdding && (
+          <div className="mt-3 space-y-2 animate-slide-up border border-border p-3">
+            <select
+              value={newCategory}
+              onChange={(e) => setNewCategory(e.target.value)}
+              className="w-full text-xs border border-border bg-card px-3 py-2 focus:outline-none focus:border-foreground font-mono"
+            >
+              {CATEGORIES.filter((c) => c !== "Все").map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+            <textarea
+              value={newFact}
+              onChange={(e) => setNewFact(e.target.value)}
+              placeholder="Опишите факт, который ассистент должен помнить..."
+              rows={3}
+              className="w-full resize-none border border-border bg-card text-sm px-3 py-2 focus:outline-none focus:border-foreground placeholder:text-muted-foreground text-sm"
+            />
+            <button
+              onClick={handleAdd}
+              disabled={!newFact.trim()}
+              className="w-full py-2 bg-foreground text-background text-xs font-medium hover:opacity-80 disabled:opacity-30 transition-opacity"
+            >
+              Сохранить факт
+            </button>
+          </div>
+        )}
+
+        <div className="flex gap-1.5 overflow-x-auto mt-3 pb-0.5">
+          {CATEGORIES.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setFilter(cat)}
+              className={`flex-shrink-0 px-3 py-1 text-xs font-mono transition-colors ${
+                filter === cat ? "bg-foreground text-background" : "bg-secondary text-secondary-foreground hover:bg-muted"
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
+        {filtered.length === 0 && (
+          <div className="text-center py-12 text-muted-foreground text-sm">
+            Нет фактов в категории «{filter}»
+          </div>
+        )}
+        {filtered.map((fact, i) => (
+          <div
+            key={fact.id}
+            className="border border-border bg-card p-4 group animate-fade-in"
+            style={{ animationDelay: `${i * 0.04}s` }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-sm leading-relaxed flex-1">{fact.content}</p>
+              <button
+                onClick={() => handleDelete(fact.id)}
+                className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+              >
+                <Icon name="Trash2" size={14} />
+              </button>
+            </div>
+            <div className="flex items-center gap-3 mt-3">
+              <span className="text-[11px] font-mono px-2 py-0.5 bg-secondary text-secondary-foreground">
+                {fact.category}
+              </span>
+              <span className={`text-[11px] font-mono flex items-center gap-1 ${fact.source === "auto" ? "text-blue-500" : "text-muted-foreground"}`}>
+                <Icon name={fact.source === "auto" ? "Sparkles" : "User"} size={10} />
+                {fact.source === "auto" ? "авто" : "вручную"}
+              </span>
+              <span className="text-[11px] font-mono text-muted-foreground ml-auto">{fact.addedAt}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
