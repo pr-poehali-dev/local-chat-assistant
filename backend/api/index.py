@@ -333,14 +333,13 @@ def _llm_call(base_url: str, api_key: str, model: str, messages: list) -> str:
         "temperature": 0.0,
         "max_tokens": 512,
         "messages": messages,
-        "response_format": {"type": "json_object"},
     }).encode("utf-8")
     req = urllib.request.Request(
         url, data=payload,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with urllib.request.urlopen(req, timeout=20) as resp:
         data = json.loads(resp.read())
     return data["choices"][0]["message"]["content"]
 
@@ -395,9 +394,11 @@ def _memory_gate(session_id: str, user_msg: str, assistant_msg: str) -> None:
         print(f"[GATE] raw: {raw[:500]}")
 
         try:
-            result = json.loads(raw)
+            # Ищем JSON даже если модель обернула в ```json ... ```
+            json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+            result = json.loads(json_match.group(0) if json_match else raw)
         except Exception:
-            print(f"[GATE] invalid JSON: {raw[:200]}")
+            print(f"[GATE] invalid JSON: {raw[:300]}")
             return
 
         should_write = result.get("should_write", False)
