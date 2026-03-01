@@ -296,8 +296,9 @@ export function useChatStore() {
     return `${result.summary} (операций: ${applied})`;
   }, [config, facts]);
 
-  const runMemoryGate = useCallback(async (userMsg: string, assistantMsg: string, currentFacts: Fact[]) => {
-    if (!config.autoExtract || !config.apiKey || !config.baseUrl) return;
+  const runMemoryGate = useCallback(async (userMsg: string, assistantMsg: string, currentFacts: Fact[], cfg = config) => {
+    console.log("[GATE] start", { autoExtract: cfg.autoExtract, hasKey: !!cfg.apiKey, hasUrl: !!cfg.baseUrl });
+    if (!cfg.autoExtract || !cfg.apiKey || !cfg.baseUrl) return;
     try {
       const existingSample = currentFacts.slice(0, 8)
         .map((f) => `- [${f.category}] ${f.content}`)
@@ -537,8 +538,9 @@ export function useChatStore() {
       setIsThinking(false);
 
       // Memory Gate — фоново, не блокирует UI
+      console.log("[SEND] assistantContent ok?", !!assistantContent, assistantContent?.slice(0, 30));
       if (assistantContent && !assistantContent.startsWith("⚠️") && !assistantContent.startsWith("Ошибка")) {
-        runMemoryGate(text, assistantContent, facts);
+        runMemoryGate(text, assistantContent, facts, config);
       }
     },
     [activeSessionId, activeSession, config, facts, isThinking, runMemoryGate]
