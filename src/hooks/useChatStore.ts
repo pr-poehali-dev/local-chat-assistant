@@ -433,21 +433,24 @@ export function useChatStore() {
           "⚠️ LLM не подключён. Откройте «Настройки», введите Base URL и API-ключ, нажмите «Сохранить».";
       } else {
         try {
+          // Если фактов мало (≤15) — берём все. Иначе — релевантные по запросу.
           let relevantFacts = facts;
-          try {
-            const fetched = await api.facts.relevant(text, 8);
-            if (fetched.length > 0) {
-              relevantFacts = fetched.map((f) => ({
-                id: f.id,
-                content: f.text,
-                category: f.category,
-                subcategory: f.subcategory ?? undefined,
-                addedAt: "",
-                source: f.source,
-              }));
+          if (facts.length > 15) {
+            try {
+              const fetched = await api.facts.relevant(text, 10);
+              if (fetched.length > 0) {
+                relevantFacts = fetched.map((f) => ({
+                  id: f.id,
+                  content: f.text,
+                  category: f.category,
+                  subcategory: f.subcategory ?? undefined,
+                  addedAt: "",
+                  source: f.source,
+                }));
+              }
+            } catch {
+              // fallback: все факты
             }
-          } catch {
-            // fallback: используем локальные факты
           }
 
           const factContext =
