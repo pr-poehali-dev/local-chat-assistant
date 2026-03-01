@@ -140,12 +140,12 @@ export default function Index() {
           <div className="px-4 py-3 border-t border-border animate-fade-in">
             <div className="flex items-center gap-2">
               <span
-                className={`w-1.5 h-1.5 rounded-full inline-block ${
+                className={`w-1.5 h-1.5 rounded-full inline-block flex-shrink-0 ${
                   connected ? "bg-green-500" : "bg-muted-foreground"
                 }`}
               />
-              <span className="text-[11px] font-mono text-muted-foreground">
-                {connected ? config.model : "LLM не подключён"}
+              <span className="text-[11px] font-mono text-muted-foreground truncate">
+                {config.model || "LLM не подключён"}
               </span>
             </div>
           </div>
@@ -196,7 +196,7 @@ export default function Index() {
               </div>
             </div>
 
-            <aside className="w-72 flex-shrink-0 border-l border-border flex flex-col overflow-hidden">
+            <aside className="w-64 flex-shrink-0 border-l border-border flex flex-col overflow-hidden hidden lg:flex">
               <header className="h-14 border-b border-border px-5 flex items-center justify-between flex-shrink-0">
                 <h2 className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
                   Контекст · факты
