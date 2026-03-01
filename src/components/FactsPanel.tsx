@@ -1,31 +1,7 @@
 import { useState, useEffect } from "react";
-import Icon from "@/components/ui/icon";
 import type { Fact } from "@/hooks/useChatStore";
-
-// Word-level diff
-type DiffToken = { text: string; type: "same" | "added" | "removed" };
-
-function computeDiff(oldText: string, newText: string): DiffToken[] {
-  const oldWords = oldText.split(/(\s+)/);
-  const newWords = newText.split(/(\s+)/);
-  const m = oldWords.length, n = newWords.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-  for (let i = m - 1; i >= 0; i--)
-    for (let j = n - 1; j >= 0; j--)
-      dp[i][j] = oldWords[i] === newWords[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const result: DiffToken[] = [];
-  let i = 0, j = 0;
-  while (i < m || j < n) {
-    if (i < m && j < n && oldWords[i] === newWords[j]) {
-      result.push({ text: oldWords[i], type: "same" }); i++; j++;
-    } else if (j < n && (i >= m || dp[i][j + 1] >= dp[i + 1][j])) {
-      result.push({ text: newWords[j], type: "added" }); j++;
-    } else {
-      result.push({ text: oldWords[i], type: "removed" }); i++;
-    }
-  }
-  return result;
-}
+import FactsPanelHeader from "./facts/FactsPanelHeader";
+import CategoryBlock from "./facts/CategoryBlock";
 
 interface FactsPanelProps {
   facts: Fact[];
@@ -60,13 +36,9 @@ export default function FactsPanel({
   onSummarize,
   onSendMessage,
   onMarkFactsSeen,
-  onMarkSummariesSeen,
   apiKey = "",
   baseUrl = "",
 }: FactsPanelProps) {
-  const [newFact, setNewFact] = useState("");
-  const [newCategory, setNewCategory] = useState("О компании");
-  const [isAdding, setIsAdding] = useState(false);
   const [consolidating, setConsolidating] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -78,23 +50,22 @@ export default function FactsPanel({
   const [recording, setRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
 
-  // Сбрасываем подсветку новых фактов при заходе в раздел
+  // Сбрасываем подсветку новых фактов через 5 сек
   useEffect(() => {
     if (newFactIds.size > 0) {
-      const timer = setTimeout(() => {
-        onMarkFactsSeen?.();
-      }, 5000);
+      const timer = setTimeout(() => { onMarkFactsSeen?.(); }, 5000);
       return () => clearTimeout(timer);
     }
   }, [newFactIds, onMarkFactsSeen]);
+
+  // ── Handlers ──────────────────────────────────────────────────
 
   const handleConsolidate = async () => {
     if (!onConsolidate) return;
     setConsolidating(true);
     setConsolidateResult(null);
     try {
-      const result = await onConsolidate();
-      setConsolidateResult(result);
+      setConsolidateResult(await onConsolidate());
     } catch {
       setConsolidateResult("Ошибка структурирования");
     } finally {
@@ -107,19 +78,14 @@ export default function FactsPanel({
     setSummarizing(true);
     setConsolidateResult(null);
     try {
-      const result = await onSummarize();
-      setConsolidateResult(result);
-      // Раскрываем категории с обновлённым резюме и включаем diff-режим
+      setConsolidateResult(await onSummarize());
       setOpenCategories((prev) => {
         const next = new Set(prev);
         updatedSummaryCategories.forEach((c) => next.add(c));
         return next;
       });
-      // Включаем diff только для категорий где было старое резюме
       const diffCats = new Set<string>();
-      updatedSummaryCategories.forEach((c) => {
-        if (prevSummaries[c]) diffCats.add(c);
-      });
+      updatedSummaryCategories.forEach((c) => { if (prevSummaries[c]) diffCats.add(c); });
       setDiffCategories(diffCats);
     } catch {
       setConsolidateResult("Ошибка резюмирования");
@@ -140,14 +106,6 @@ export default function FactsPanel({
     } finally {
       setClearing(false);
     }
-  };
-
-  const handleAdd = () => {
-    const text = newFact.trim();
-    if (!text) return;
-    onAdd(text, newCategory);
-    setNewFact("");
-    setIsAdding(false);
   };
 
   const toggleCategory = (cat: string) => {
@@ -173,20 +131,17 @@ export default function FactsPanel({
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
       const mr = new MediaRecorder(stream, { mimeType });
       const chunks: Blob[] = [];
-
       mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
       mr.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunks, { type: mimeType });
         if (blob.size < 500) return;
-
         const openaiBase = baseUrl.includes("openai.com") ? "https://api.openai.com/v1" : baseUrl;
         const form = new FormData();
         form.append("file", blob, "audio.webm");
         form.append("model", "whisper-1");
         form.append("language", "ru");
         form.append("response_format", "text");
-
         try {
           const res = await fetch(`${openaiBase}/audio/transcriptions`, {
             method: "POST",
@@ -195,8 +150,7 @@ export default function FactsPanel({
           });
           const transcript = (await res.text()).trim();
           if (transcript && onSendMessage) {
-            const prefix = `[По резюме категории "${cat}"] `;
-            onSendMessage(prefix + transcript);
+            onSendMessage(`[По резюме категории "${cat}"] ${transcript}`);
           }
         } catch (e) {
           console.warn("voice comment transcribe error", e);
@@ -205,7 +159,6 @@ export default function FactsPanel({
         setVoiceComment(null);
         setMediaRecorder(null);
       };
-
       mr.start();
       setMediaRecorder(mr);
       setRecording(true);
@@ -216,12 +169,11 @@ export default function FactsPanel({
   };
 
   const stopVoiceComment = () => {
-    if (mediaRecorder && mediaRecorder.state === "recording") {
-      mediaRecorder.stop();
-    }
+    if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
   };
 
-  // Строим дерево из реальных категорий фактов + категорий у которых есть резюме
+  // ── Дерево категорий ──────────────────────────────────────────
+
   const tree: Record<string, Record<string, Fact[]>> = {};
   for (const fact of facts) {
     const cat = fact.category || "Другое";
@@ -230,7 +182,6 @@ export default function FactsPanel({
     if (!tree[cat][sub]) tree[cat][sub] = [];
     tree[cat][sub].push(fact);
   }
-  // Добавляем категории из резюме (даже если фактов там нет)
   for (const cat of Object.keys(summaries)) {
     if (!tree[cat]) tree[cat] = {};
   }
@@ -245,280 +196,56 @@ export default function FactsPanel({
       0
     );
 
-  const voiceAvailable = !!apiKey && !!baseUrl;
-
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-border">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="text-sm font-semibold">База знаний</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {facts.length} фактов · подмешиваются в контекст
-              {newFactIds.size > 0 && (
-                <span className="ml-2 text-violet-500 font-medium">+{newFactIds.size} новых</span>
-              )}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            {onProfileCommand && (
-              <button
-                onClick={onProfileCommand}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border hover:bg-secondary transition-colors"
-              >
-                <Icon name="User" size={13} />
-                Профиль
-              </button>
-            )}
-            {onConsolidate && facts.length > 0 && (
-              <button
-                onClick={handleConsolidate}
-                disabled={consolidating || summarizing}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border hover:bg-secondary transition-colors disabled:opacity-40"
-              >
-                <Icon name={consolidating ? "Loader" : "Sparkles"} size={13} />
-                {consolidating ? "Структурирую..." : "Структурировать"}
-              </button>
-            )}
-            {onSummarize && facts.length > 0 && (
-              <button
-                onClick={handleSummarize}
-                disabled={summarizing || consolidating}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border hover:bg-secondary transition-colors disabled:opacity-40"
-              >
-                <Icon name={summarizing ? "Loader" : "FileText"} size={13} />
-                {summarizing ? "Резюмирую..." : "Резюме"}
-              </button>
-            )}
-            <button
-              onClick={() => setIsAdding(!isAdding)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
-                isAdding ? "bg-foreground text-background" : "border border-border hover:bg-secondary"
-              }`}
-            >
-              <Icon name={isAdding ? "X" : "Plus"} size={13} />
-              {isAdding ? "Отмена" : "Добавить"}
-            </button>
-            {onClear && (
-              <button
-                onClick={handleClear}
-                disabled={clearing || consolidating || summarizing}
-                title="Очистить всю базу знаний"
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border hover:bg-destructive/10 hover:text-destructive hover:border-destructive/40 transition-colors disabled:opacity-40"
-              >
-                <Icon name={clearing ? "Loader" : "Trash2"} size={13} />
-                {clearing ? "Очищаю..." : "Очистить"}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {consolidateResult && (
-          <div className="mt-2 px-3 py-2 border border-border bg-secondary text-xs text-muted-foreground flex items-start gap-2 animate-fade-in">
-            <Icon name="CheckCircle" size={13} className="flex-shrink-0 mt-0.5" />
-            <span>{consolidateResult}</span>
-          </div>
-        )}
-
-        {isAdding && (
-          <div className="mt-3 space-y-2 animate-slide-up border border-border p-3">
-            <select
-              value={newCategory}
-              onChange={(e) => setNewCategory(e.target.value)}
-              className="w-full text-xs border border-border bg-card px-3 py-2 focus:outline-none focus:border-foreground font-mono"
-            >
-              {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-            </select>
-            <textarea
-              value={newFact}
-              onChange={(e) => setNewFact(e.target.value)}
-              placeholder="Опишите факт, который ассистент должен помнить..."
-              rows={3}
-              className="w-full resize-none border border-border bg-card text-sm px-3 py-2 focus:outline-none focus:border-foreground placeholder:text-muted-foreground"
-            />
-            <button
-              onClick={handleAdd}
-              disabled={!newFact.trim()}
-              className="w-full py-2 bg-foreground text-background text-xs font-medium hover:opacity-80 disabled:opacity-30 transition-opacity"
-            >
-              Сохранить факт
-            </button>
-          </div>
-        )}
-      </div>
+      <FactsPanelHeader
+        factsCount={facts.length}
+        newFactsCount={newFactIds.size}
+        consolidating={consolidating}
+        summarizing={summarizing}
+        clearing={clearing}
+        consolidateResult={consolidateResult}
+        onConsolidate={onConsolidate ? handleConsolidate : undefined}
+        onSummarize={onSummarize ? handleSummarize : undefined}
+        onClear={onClear ? handleClear : undefined}
+        onProfileCommand={onProfileCommand}
+        onAdd={onAdd}
+        existingCategories={allCats}
+      />
 
       <div className="flex-1 overflow-y-auto py-2">
-        {facts.length === 0 && (
+        {facts.length === 0 && Object.keys(summaries).length === 0 && (
           <div className="text-center py-12 text-muted-foreground text-sm px-6">
             Нет фактов. Поговорите с ассистентом — он начнёт запоминать.
           </div>
         )}
 
-        {allCats.map((cat) => {
-          const count = totalByCat(cat);
-          const isOpen = openCategories.has(cat);
-          const subcats = Object.entries(tree[cat] || {});
-          const newCount = newCountByCat(cat);
-          const summaryUpdated = updatedSummaryCategories.has(cat);
-          const inDiffMode = diffCategories.has(cat);
-          const oldSummary = prevSummaries[cat];
-          const newSummary = summaries[cat];
-
-          return (
-            <div key={cat} className="border-b border-border last:border-b-0">
-              <button
-                onClick={() => toggleCategory(cat)}
-                className="w-full flex items-center gap-2 px-6 py-3 hover:bg-secondary transition-colors text-left"
-              >
-                <Icon name={isOpen ? "ChevronDown" : "ChevronRight"} size={14} className="text-muted-foreground flex-shrink-0" />
-                <span className="text-sm font-medium flex-1">{cat}</span>
-                {newCount > 0 && (
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 bg-violet-500/15 text-violet-500 rounded-sm">
-                    +{newCount} new
-                  </span>
-                )}
-                {summaryUpdated && (
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 bg-amber-500/15 text-amber-500 rounded-sm">
-                    резюме ↑
-                  </span>
-                )}
-                <span className="text-xs font-mono text-muted-foreground ml-1">{count}</span>
-              </button>
-
-              {isOpen && (
-                <div className="pb-1">
-                  {newSummary && (
-                    <div className="mx-4 mb-2 border border-border bg-secondary/30">
-                      {/* Тулбар резюме */}
-                      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/60">
-                        <span className="text-[10px] font-mono text-muted-foreground flex-1">Резюме раздела</span>
-                        {inDiffMode && oldSummary ? (
-                          <button
-                            onClick={() => setDiffCategories((p) => { const n = new Set(p); n.delete(cat); return n; })}
-                            className="text-[10px] font-mono text-amber-500 hover:text-foreground flex items-center gap-1 transition-colors"
-                          >
-                            <Icon name="Eye" size={10} />
-                            скрыть diff
-                          </button>
-                        ) : (oldSummary && summaryUpdated) ? (
-                          <button
-                            onClick={() => setDiffCategories((p) => new Set([...p, cat]))}
-                            className="text-[10px] font-mono text-amber-500 hover:text-foreground flex items-center gap-1 transition-colors"
-                          >
-                            <Icon name="GitCompare" size={10} />
-                            показать изменения
-                          </button>
-                        ) : null}
-                        {voiceAvailable && (
-                          recording && voiceComment?.cat === cat ? (
-                            <button
-                              onMouseUp={stopVoiceComment}
-                              onTouchEnd={stopVoiceComment}
-                              className="text-[10px] font-mono text-red-500 animate-pulse flex items-center gap-1"
-                            >
-                              <Icon name="MicOff" size={10} />
-                              отпустите...
-                            </button>
-                          ) : (
-                            <button
-                              onMouseDown={() => startVoiceComment(cat)}
-                              onTouchStart={() => startVoiceComment(cat)}
-                              disabled={recording}
-                              className="text-[10px] font-mono text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors disabled:opacity-30"
-                            >
-                              <Icon name="Mic" size={10} />
-                              голос
-                            </button>
-                          )
-                        )}
-                      </div>
-
-                      {/* Diff или обычный текст */}
-                      {inDiffMode && oldSummary ? (
-                        <div className="px-4 py-3 text-xs leading-relaxed">
-                          <div className="text-[10px] font-mono text-muted-foreground mb-2 flex items-center gap-2">
-                            <span className="px-1 bg-red-500/15 text-red-500">— удалено</span>
-                            <span className="px-1 bg-green-500/15 text-green-500">+ добавлено</span>
-                          </div>
-                          <p className="whitespace-pre-wrap">
-                            {computeDiff(oldSummary, newSummary).map((token, idx) => (
-                              token.type === "same" ? (
-                                <span key={idx}>{token.text}</span>
-                              ) : token.type === "added" ? (
-                                <mark key={idx} className="bg-green-500/20 text-green-700 dark:text-green-300 rounded-sm">{token.text}</mark>
-                              ) : (
-                                <del key={idx} className="bg-red-500/15 text-red-500 rounded-sm">{token.text}</del>
-                              )
-                            ))}
-                          </p>
-                        </div>
-                      ) : (
-                        <p className="px-4 py-3 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">{newSummary}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {subcats.map(([sub, subFacts]) => {
-                    const subKey = `${cat}::${sub}`;
-                    const subOpen = openSubcategories.has(subKey);
-
-                    return (
-                      <div key={sub}>
-                        <button
-                          onClick={() => toggleSubcategory(subKey)}
-                          className="w-full flex items-center gap-2 pl-10 pr-6 py-2 hover:bg-secondary/60 transition-colors text-left"
-                        >
-                          <Icon name={subOpen ? "ChevronDown" : "ChevronRight"} size={12} className="text-muted-foreground flex-shrink-0" />
-                          <span className="text-xs font-mono text-muted-foreground flex-1">{sub}</span>
-                          <span className="text-[11px] font-mono text-muted-foreground">{subFacts.length}</span>
-                        </button>
-
-                        {subOpen && (
-                          <div className="space-y-1 pb-1">
-                            {subFacts.map((fact) => {
-                              const isNew = newFactIds.has(fact.id);
-                              return (
-                                <div
-                                  key={fact.id}
-                                  className={`group mx-4 pl-6 pr-3 py-2.5 border flex items-start gap-3 animate-fade-in transition-colors ${
-                                    isNew
-                                      ? "border-violet-400/50 bg-violet-500/5"
-                                      : "border-border bg-card"
-                                  }`}
-                                >
-                                  {isNew && (
-                                    <span className="flex-shrink-0 mt-1">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-violet-500 inline-block" />
-                                    </span>
-                                  )}
-                                  <p className="text-sm leading-relaxed flex-1">{fact.content}</p>
-                                  <div className="flex-shrink-0 flex items-center gap-2">
-                                    <span className={`text-[10px] font-mono ${
-                                      fact.source === "memory_gate" ? "text-violet-500" :
-                                      fact.source === "auto" ? "text-blue-500" : "text-muted-foreground"
-                                    }`}>
-                                      <Icon name={fact.source === "memory_gate" ? "Shield" : fact.source === "auto" ? "Sparkles" : "User"} size={10} />
-                                    </span>
-                                    <button
-                                      onClick={() => onDelete(fact.id)}
-                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                                    >
-                                      <Icon name="Trash2" size={13} />
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {allCats.map((cat) => (
+          <CategoryBlock
+            key={cat}
+            cat={cat}
+            subcats={Object.entries(tree[cat] || {})}
+            count={totalByCat(cat)}
+            newCount={newCountByCat(cat)}
+            isOpen={openCategories.has(cat)}
+            summaryUpdated={updatedSummaryCategories.has(cat)}
+            inDiffMode={diffCategories.has(cat)}
+            oldSummary={prevSummaries[cat]}
+            newSummary={summaries[cat]}
+            newFactIds={newFactIds}
+            openSubcategories={openSubcategories}
+            voiceAvailable={!!apiKey && !!baseUrl}
+            recording={recording}
+            voiceCommentCat={voiceComment?.cat ?? null}
+            onToggleCategory={toggleCategory}
+            onToggleSubcategory={toggleSubcategory}
+            onEnableDiff={(c) => setDiffCategories((p) => new Set([...p, c]))}
+            onDisableDiff={(c) => setDiffCategories((p) => { const n = new Set(p); n.delete(c); return n; })}
+            onStartVoice={startVoiceComment}
+            onStopVoice={stopVoiceComment}
+            onDelete={onDelete}
+          />
+        ))}
       </div>
     </div>
   );
