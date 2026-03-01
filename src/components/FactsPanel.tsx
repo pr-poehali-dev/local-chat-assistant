@@ -1,49 +1,16 @@
 import { useState } from "react";
 import Icon from "@/components/ui/icon";
-
-interface Fact {
-  id: string;
-  content: string;
-  category: string;
-  addedAt: string;
-  source: "manual" | "auto";
-}
-
-const DEMO_FACTS: Fact[] = [
-  {
-    id: "f1",
-    content: "Компания работает в сегменте B2B SaaS, основной рынок — Россия и СНГ",
-    category: "О компании",
-    addedAt: "27 фев",
-    source: "manual",
-  },
-  {
-    id: "f2",
-    content: "Целевая выручка на 2026 год: 120 млн руб. Текущий темп роста: 18% QoQ",
-    category: "Финансы",
-    addedAt: "26 фев",
-    source: "manual",
-  },
-  {
-    id: "f3",
-    content: "Команда: 34 человека, из них 12 в разработке, 8 в продажах",
-    category: "Команда",
-    addedAt: "25 фев",
-    source: "auto",
-  },
-  {
-    id: "f4",
-    content: "Главный конкурент — AmoCRM, основное преимущество — отраслевая специализация",
-    category: "Рынок",
-    addedAt: "24 фев",
-    source: "auto",
-  },
-];
+import type { Fact } from "@/hooks/useChatStore";
 
 const CATEGORIES = ["Все", "О компании", "Финансы", "Команда", "Рынок", "Другое"];
 
-export default function FactsPanel() {
-  const [facts, setFacts] = useState<Fact[]>(DEMO_FACTS);
+interface FactsPanelProps {
+  facts: Fact[];
+  onAdd: (content: string, category: string) => void;
+  onDelete: (id: string) => void;
+}
+
+export default function FactsPanel({ facts, onAdd, onDelete }: FactsPanelProps) {
   const [newFact, setNewFact] = useState("");
   const [newCategory, setNewCategory] = useState("О компании");
   const [filter, setFilter] = useState("Все");
@@ -52,20 +19,9 @@ export default function FactsPanel() {
   const handleAdd = () => {
     const text = newFact.trim();
     if (!text) return;
-    const fact: Fact = {
-      id: Date.now().toString(),
-      content: text,
-      category: newCategory,
-      addedAt: "сейчас",
-      source: "manual",
-    };
-    setFacts((prev) => [fact, ...prev]);
+    onAdd(text, newCategory);
     setNewFact("");
     setIsAdding(false);
-  };
-
-  const handleDelete = (id: string) => {
-    setFacts((prev) => prev.filter((f) => f.id !== id));
   };
 
   const filtered = filter === "Все" ? facts : facts.filter((f) => f.category === filter);
@@ -76,7 +32,9 @@ export default function FactsPanel() {
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className="text-sm font-semibold">База знаний</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">{facts.length} фактов · подмешиваются в контекст</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {facts.length} фактов · подмешиваются в контекст
+            </p>
           </div>
           <button
             onClick={() => setIsAdding(!isAdding)}
@@ -105,7 +63,7 @@ export default function FactsPanel() {
               onChange={(e) => setNewFact(e.target.value)}
               placeholder="Опишите факт, который ассистент должен помнить..."
               rows={3}
-              className="w-full resize-none border border-border bg-card text-sm px-3 py-2 focus:outline-none focus:border-foreground placeholder:text-muted-foreground text-sm"
+              className="w-full resize-none border border-border bg-card text-sm px-3 py-2 focus:outline-none focus:border-foreground placeholder:text-muted-foreground"
             />
             <button
               onClick={handleAdd}
@@ -123,7 +81,9 @@ export default function FactsPanel() {
               key={cat}
               onClick={() => setFilter(cat)}
               className={`flex-shrink-0 px-3 py-1 text-xs font-mono transition-colors ${
-                filter === cat ? "bg-foreground text-background" : "bg-secondary text-secondary-foreground hover:bg-muted"
+                filter === cat
+                  ? "bg-foreground text-background"
+                  : "bg-secondary text-secondary-foreground hover:bg-muted"
               }`}
             >
               {cat}
@@ -135,7 +95,7 @@ export default function FactsPanel() {
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
         {filtered.length === 0 && (
           <div className="text-center py-12 text-muted-foreground text-sm">
-            Нет фактов в категории «{filter}»
+            {filter === "Все" ? "Нет фактов. Добавьте первый!" : `Нет фактов в категории «${filter}»`}
           </div>
         )}
         {filtered.map((fact, i) => (
@@ -147,7 +107,7 @@ export default function FactsPanel() {
             <div className="flex items-start justify-between gap-3">
               <p className="text-sm leading-relaxed flex-1">{fact.content}</p>
               <button
-                onClick={() => handleDelete(fact.id)}
+                onClick={() => onDelete(fact.id)}
                 className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
               >
                 <Icon name="Trash2" size={14} />

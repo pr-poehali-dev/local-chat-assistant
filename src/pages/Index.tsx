@@ -4,6 +4,7 @@ import ChatPanel from "@/components/ChatPanel";
 import HistoryPanel from "@/components/HistoryPanel";
 import FactsPanel from "@/components/FactsPanel";
 import SettingsPanel from "@/components/SettingsPanel";
+import { useChatStore } from "@/hooks/useChatStore";
 
 type Tab = "chat" | "history" | "facts" | "settings";
 
@@ -14,31 +15,46 @@ const NAV_ITEMS: { id: Tab; icon: string; label: string }[] = [
   { id: "settings", icon: "Settings2", label: "Настройки" },
 ];
 
-function generateSessionId() {
-  return "sess-" + Math.random().toString(36).slice(2, 10);
-}
+const PANEL_TITLES: Record<Tab, string> = {
+  chat: "Диалог",
+  history: "История диалогов",
+  facts: "База знаний",
+  settings: "Настройки LLM",
+};
 
 export default function Index() {
   const [activeTab, setActiveTab] = useState<Tab>("chat");
-  const [sessionId, setSessionId] = useState(generateSessionId);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  const store = useChatStore();
+  const {
+    sessions,
+    activeSession,
+    activeSessionId,
+    facts,
+    config,
+    isThinking,
+    createSession,
+    selectSession,
+    sendMessage,
+    addFact,
+    deleteFact,
+    saveConfig,
+  } = store;
+
   const handleNewSession = () => {
-    setSessionId(generateSessionId());
+    createSession();
     setActiveTab("chat");
   };
 
   const handleSelectSession = (id: string) => {
-    setSessionId(id);
+    selectSession(id);
     setActiveTab("chat");
   };
 
-  const PANEL_TITLES: Record<Tab, string> = {
-    chat: "Диалог",
-    history: "История диалогов",
-    facts: "База знаний",
-    settings: "Настройки LLM",
-  };
+  const connected = !!config.apiKey && !!config.baseUrl;
+
+  const contextFacts = facts.slice(0, 4);
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
@@ -83,8 +99,14 @@ export default function Index() {
         {sidebarOpen && (
           <div className="px-4 py-3 border-t border-border animate-fade-in">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-muted-foreground inline-block" />
-              <span className="text-[11px] font-mono text-muted-foreground">LLM не подключён</span>
+              <span
+                className={`w-1.5 h-1.5 rounded-full inline-block ${
+                  connected ? "bg-green-500" : "bg-muted-foreground"
+                }`}
+              />
+              <span className="text-[11px] font-mono text-muted-foreground">
+                {connected ? config.model : "LLM не подключён"}
+              </span>
             </div>
           </div>
         )}
@@ -92,13 +114,14 @@ export default function Index() {
 
       <div className="flex flex-1 overflow-hidden">
         {activeTab === "history" && (
-          <div className="w-full border-r border-border overflow-hidden flex flex-col">
+          <div className="w-full overflow-hidden flex flex-col">
             <header className="h-14 border-b border-border px-6 flex items-center flex-shrink-0">
               <h1 className="text-sm font-semibold">{PANEL_TITLES[activeTab]}</h1>
             </header>
             <div className="flex-1 overflow-hidden">
               <HistoryPanel
-                activeSession={sessionId}
+                sessions={sessions}
+                activeSessionId={activeSessionId}
                 onSelectSession={handleSelectSession}
                 onNewSession={handleNewSession}
               />
@@ -110,7 +133,10 @@ export default function Index() {
           <>
             <div className="flex-1 flex flex-col overflow-hidden min-w-0">
               <header className="h-14 border-b border-border px-6 flex items-center justify-between flex-shrink-0">
-                <h1 className="text-sm font-semibold">{PANEL_TITLES[activeTab]}</h1>
+                <div>
+                  <h1 className="text-sm font-semibold">{activeSession?.title ?? "Диалог"}</h1>
+                  <p className="text-[11px] font-mono text-muted-foreground">{PANEL_TITLES.chat}</p>
+                </div>
                 <button
                   onClick={handleNewSession}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border hover:bg-secondary transition-colors font-medium"
@@ -120,36 +146,68 @@ export default function Index() {
                 </button>
               </header>
               <div className="flex-1 overflow-hidden">
-                <ChatPanel sessionId={sessionId} />
+                <ChatPanel
+                  messages={activeSession?.messages ?? []}
+                  isThinking={isThinking}
+                  onSend={sendMessage}
+                  sessionId={activeSessionId}
+                />
               </div>
             </div>
 
             <aside className="w-72 flex-shrink-0 border-l border-border flex flex-col overflow-hidden">
-              <header className="h-14 border-b border-border px-5 flex items-center flex-shrink-0">
+              <header className="h-14 border-b border-border px-5 flex items-center justify-between flex-shrink-0">
                 <h2 className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
                   Контекст · факты
                 </h2>
+                <button
+                  onClick={() => setActiveTab("facts")}
+                  className="text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  все →
+                </button>
               </header>
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
-                {[
-                  { text: "B2B SaaS, Россия и СНГ", cat: "О компании" },
-                  { text: "Цель: 120 млн руб. в 2026", cat: "Финансы" },
-                  { text: "34 человека в команде", cat: "Команда" },
-                  { text: "Конкурент — AmoCRM", cat: "Рынок" },
-                ].map((f, i) => (
+                {facts.length === 0 && (
+                  <div className="text-xs text-muted-foreground text-center py-8">
+                    Нет фактов.{" "}
+                    <button
+                      onClick={() => setActiveTab("facts")}
+                      className="underline hover:text-foreground"
+                    >
+                      Добавить →
+                    </button>
+                  </div>
+                )}
+                {contextFacts.map((f, i) => (
                   <div
-                    key={i}
+                    key={f.id}
                     className="border border-border p-3 animate-fade-in"
                     style={{ animationDelay: `${i * 0.05}s` }}
                   >
-                    <p className="text-xs leading-relaxed">{f.text}</p>
-                    <span className="text-[10px] font-mono text-muted-foreground mt-1.5 block">{f.cat}</span>
+                    <p className="text-xs leading-relaxed">{f.content}</p>
+                    <span className="text-[10px] font-mono text-muted-foreground mt-1.5 block">{f.category}</span>
                   </div>
                 ))}
-                <div className="text-[11px] text-muted-foreground font-mono pt-2 flex items-center gap-1.5">
-                  <Icon name="Info" size={11} />
-                  <span>ТОП-4 из 4 фактов</span>
-                </div>
+                {facts.length > 4 && (
+                  <div className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5">
+                    <Icon name="Info" size={11} />
+                    <span>Показано 4 из {facts.length} фактов</span>
+                  </div>
+                )}
+                {!connected && (
+                  <div className="mt-4 border border-dashed border-border p-3">
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Для реальных ответов настройте{" "}
+                      <button
+                        onClick={() => setActiveTab("settings")}
+                        className="underline hover:text-foreground"
+                      >
+                        LLM-подключение →
+                      </button>
+                    </p>
+                  </div>
+                )}
               </div>
             </aside>
           </>
@@ -161,8 +219,12 @@ export default function Index() {
               <h1 className="text-sm font-semibold">{PANEL_TITLES[activeTab]}</h1>
             </header>
             <div className="flex-1 overflow-hidden">
-              {activeTab === "facts" && <FactsPanel />}
-              {activeTab === "settings" && <SettingsPanel />}
+              {activeTab === "facts" && (
+                <FactsPanel facts={facts} onAdd={addFact} onDelete={deleteFact} />
+              )}
+              {activeTab === "settings" && (
+                <SettingsPanel config={config} onSave={saveConfig} />
+              )}
             </div>
           </div>
         )}

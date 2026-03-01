@@ -1,30 +1,16 @@
-import { useState, useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import Icon from "@/components/ui/icon";
-
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
-}
+import type { Message } from "@/hooks/useChatStore";
 
 interface ChatPanelProps {
+  messages: Message[];
+  isThinking: boolean;
+  onSend: (text: string) => void;
   sessionId: string;
 }
 
-const DEMO_MESSAGES: Message[] = [
-  {
-    id: "1",
-    role: "assistant",
-    content: "Добро пожаловать. Я готов помочь с анализом данных и деловыми решениями. Подключите LLM в настройках и начните диалог.",
-    timestamp: new Date(),
-  },
-];
-
-export default function ChatPanel({ sessionId }: ChatPanelProps) {
-  const [messages, setMessages] = useState<Message[]>(DEMO_MESSAGES);
+export default function ChatPanel({ messages, isThinking, onSend, sessionId }: ChatPanelProps) {
   const [input, setInput] = useState("");
-  const [isThinking, setIsThinking] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -34,28 +20,12 @@ export default function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const handleSend = () => {
     const text = input.trim();
-    if (!text) return;
-
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: text,
-      timestamp: new Date(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
+    if (!text || isThinking) return;
+    onSend(text);
     setInput("");
-    setIsThinking(true);
-
-    setTimeout(() => {
-      setIsThinking(false);
-      const assistantMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: "LLM не подключён. Настройте API-ключ и base URL в разделе «Настройки», чтобы получать реальные ответы.",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
-    }, 1200);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -74,7 +44,7 @@ export default function ChatPanel({ sessionId }: ChatPanelProps) {
   };
 
   const formatTime = (d: Date) =>
-    d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    new Date(d).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 
   return (
     <div className="flex flex-col h-full">
@@ -83,12 +53,12 @@ export default function ChatPanel({ sessionId }: ChatPanelProps) {
           <div
             key={msg.id}
             className="animate-fade-in"
-            style={{ animationDelay: `${i * 0.03}s` }}
+            style={{ animationDelay: `${Math.min(i * 0.03, 0.2)}s` }}
           >
             {msg.role === "user" ? (
               <div className="flex justify-end">
                 <div className="max-w-[72%]">
-                  <div className="message-user px-4 py-3 text-sm leading-relaxed">
+                  <div className="message-user px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap">
                     {msg.content}
                   </div>
                   <div className="text-[11px] text-muted-foreground mt-1 text-right font-mono">
@@ -102,7 +72,7 @@ export default function ChatPanel({ sessionId }: ChatPanelProps) {
                   <span className="text-background text-[10px] font-mono font-medium">AI</span>
                 </div>
                 <div className="max-w-[80%]">
-                  <div className="message-assistant px-4 py-3 text-sm leading-relaxed">
+                  <div className="message-assistant px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap">
                     {msg.content}
                   </div>
                   <div className="text-[11px] text-muted-foreground mt-1 font-mono">
@@ -137,9 +107,10 @@ export default function ChatPanel({ sessionId }: ChatPanelProps) {
               value={input}
               onChange={(e) => { setInput(e.target.value); adjustHeight(); }}
               onKeyDown={handleKeyDown}
-              placeholder="Введите запрос... (Enter — отправить, Shift+Enter — перенос)"
+              disabled={isThinking}
+              placeholder={isThinking ? "Ассистент отвечает..." : "Введите запрос... (Enter — отправить, Shift+Enter — перенос)"}
               rows={1}
-              className="w-full resize-none border border-border bg-card text-sm px-4 py-3 pr-4 focus:outline-none focus:border-foreground transition-colors placeholder:text-muted-foreground font-sans leading-relaxed"
+              className="w-full resize-none border border-border bg-card text-sm px-4 py-3 focus:outline-none focus:border-foreground transition-colors placeholder:text-muted-foreground font-sans leading-relaxed disabled:opacity-50"
               style={{ minHeight: "48px", maxHeight: "160px" }}
             />
           </div>
@@ -153,7 +124,7 @@ export default function ChatPanel({ sessionId }: ChatPanelProps) {
         </div>
         <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground font-mono">
           <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground inline-block" />
-          <span>Сессия: {sessionId.slice(0, 8)}...</span>
+          <span>Сессия: {sessionId.slice(0, 12)}</span>
         </div>
       </div>
     </div>
