@@ -72,37 +72,41 @@ Rules:
 - If nothing to improve → return {"operations":[], "summary":"All facts look good"}
 - Available categories: О компании, Финансы, Команда, Рынок, Другое`;
 
-const MEMORY_GATE_SYSTEM = `You are a memory extractor for a personal AI assistant.
-Your job: extract ALL valuable long-term facts from the conversation, regardless of what's already stored.
+const MEMORY_GATE_SYSTEM = `You are a knowledge base builder for a personal AI assistant.
+The PURPOSE of this memory is not curiosity — it is to build a reliable, structured knowledge base so the assistant can give accurate, personalised help in the future.
+
+The user's name is known from context (e.g. Андрей). NEVER write "пользователь" — always use the actual name if mentioned anywhere in conversation or existing facts. If name is unknown, write "владелец" or describe their role.
+
 Return ONLY valid JSON (no markdown):
 {"should_write":false,"reason":"...","facts":[]}
 
-ALWAYS SAVE facts that are:
-- Personal context (name, location, role, background story, how they started)
-- Business info (company name, product, market, customers, team size, revenue, history)
-- Stable preferences (work style, likes/dislikes, values)
-- Explicit decisions/policies ("we always do X")
-- Goals, challenges, plans, personal projects
+SAVE facts that are:
+- Identity: full name, age, location, family, background
+- Business (Joywood): product, sales channels, clients, team, history, values, goals
+- Personal projects separate from main business: describe them clearly and note they are personal/separate
+- Stable preferences, work style, recurring patterns
+- Explicit decisions, plans, challenges
 
 DO NOT save:
-- Pure small talk or greetings with zero information
-- Assistant's own suggestions or questions
-- Exact duplicates of EXISTING FACTS (same meaning, same wording)
+- Small talk with zero informational value
+- The assistant's own suggestions, advice or questions
+- Exact duplicates of EXISTING FACTS
 
 Rules:
-- Extract as many facts as the conversation contains — no artificial limit
-- If the user tells a story → decompose it into separate atomic facts
-- EXISTING FACTS are shown only to avoid exact duplicates. DO NOT use them to block new or complementary facts on the same topic.
-- Each fact: text must be SPECIFIC and self-contained — include who/what/why so it makes sense without context. Never write vague sentences like "Пользователь создает приложение" — write "Андрей разрабатывает личное приложение персонального ИИ-ассистента с базой знаний (не связано с Joywood)"
-- Category rules (CRITICAL — do not confuse):
-  * "О компании" = ONLY facts about Joywood business (products, sales, clients, operations)
-  * "Другое" = personal info, personal projects, hobbies, life outside Joywood
-  * "Финансы" = revenue, costs, investments related to Joywood
-  * "Рынок" = market, competitors, customer segments of Joywood
-  * "Команда" = employees and partners of Joywood
-- subcategory: 1-3 words describing the specific aspect
-- confidence 0..1 — skip facts with confidence < 0.6
-- reason: one short sentence (for logs)`;
+- Use the person's actual name in fact text, not "пользователь"
+- Each fact must be SELF-CONTAINED and specific — someone reading it without context must understand it fully
+  BAD: "Пользователь создаёт приложение" 
+  GOOD: "Андрей разрабатывает личное приложение персонального ИИ-ассистента с памятью — отдельный проект, не связанный с Joywood"
+- Decompose stories into separate atomic facts (one fact = one sentence)
+- CRITICAL — category assignment:
+  * "О компании" = ONLY Joywood business facts (products, sales, operations, clients, company history)
+  * "Другое" = personal life, identity, personal projects NOT related to Joywood
+  * "Финансы" = Joywood finances (revenue, costs, investments)
+  * "Рынок" = Joywood market, competitors, customer segments
+  * "Команда" = Joywood employees and partners
+- subcategory: 1-3 descriptive words
+- confidence 0..1 — skip if < 0.6
+- reason: one short sentence for logs`;
 
 const DEFAULT_CONFIG: LLMConfig = {
   baseUrl: "https://api.openai.com/v1",
@@ -648,6 +652,16 @@ Rules:
     [activeSessionId, activeSession, config, facts, isThinking, runMemoryGate]
   );
 
+  const clearFacts = useCallback(async () => {
+    try {
+      await api.facts.clear();
+      setFacts([]);
+      setSummaries({});
+    } catch (_) {
+      setAppError("Не удалось очистить базу знаний");
+    }
+  }, []);
+
   const addFact = useCallback(async (content: string, category: string) => {
     try {
       const f = await api.facts.create(content, category);
@@ -708,6 +722,7 @@ Rules:
     sendMessage,
     addFact,
     deleteFact,
+    clearFacts,
     saveConfig,
     runConsolidation,
     runSummaries,

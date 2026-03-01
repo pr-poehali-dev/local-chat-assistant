@@ -9,17 +9,19 @@ interface FactsPanelProps {
   summaries?: Record<string, string>;
   onAdd: (content: string, category: string) => void;
   onDelete: (id: string) => void;
+  onClear?: () => Promise<void>;
   onProfileCommand?: () => void;
   onConsolidate?: () => Promise<string>;
   onSummarize?: () => Promise<string>;
 }
 
-export default function FactsPanel({ facts, summaries = {}, onAdd, onDelete, onProfileCommand, onConsolidate, onSummarize }: FactsPanelProps) {
+export default function FactsPanel({ facts, summaries = {}, onAdd, onDelete, onClear, onProfileCommand, onConsolidate, onSummarize }: FactsPanelProps) {
   const [newFact, setNewFact] = useState("");
   const [newCategory, setNewCategory] = useState("О компании");
   const [isAdding, setIsAdding] = useState(false);
   const [consolidating, setConsolidating] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [consolidateResult, setConsolidateResult] = useState<string | null>(null);
   const [openCategories, setOpenCategories] = useState<Set<string>>(new Set(["О компании"]));
   const [openSubcategories, setOpenSubcategories] = useState<Set<string>>(new Set());
@@ -35,6 +37,20 @@ export default function FactsPanel({ facts, summaries = {}, onAdd, onDelete, onP
       setConsolidateResult("Ошибка структурирования");
     } finally {
       setConsolidating(false);
+    }
+  };
+
+  const handleClear = async () => {
+    if (!onClear) return;
+    if (!window.confirm("Удалить все факты и резюме? Это действие нельзя отменить.")) return;
+    setClearing(true);
+    try {
+      await onClear();
+      setConsolidateResult("База знаний очищена");
+    } catch {
+      setConsolidateResult("Ошибка очистки");
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -140,6 +156,17 @@ export default function FactsPanel({ facts, summaries = {}, onAdd, onDelete, onP
               <Icon name={isAdding ? "X" : "Plus"} size={13} />
               {isAdding ? "Отмена" : "Добавить"}
             </button>
+            {onClear && (
+              <button
+                onClick={handleClear}
+                disabled={clearing || consolidating || summarizing}
+                title="Очистить всю базу знаний"
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border hover:bg-destructive/10 hover:text-destructive hover:border-destructive/40 transition-colors disabled:opacity-40"
+              >
+                <Icon name={clearing ? "Loader" : "Trash2"} size={13} />
+                {clearing ? "Очищаю..." : "Очистить"}
+              </button>
+            )}
           </div>
         </div>
 

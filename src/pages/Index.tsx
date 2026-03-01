@@ -44,6 +44,7 @@ export default function Index() {
     sendMessage,
     addFact,
     deleteFact,
+    clearFacts,
     saveConfig,
     runConsolidation,
     runSummaries,
@@ -298,7 +299,7 @@ export default function Index() {
             </header>
             <div className="flex-1 overflow-hidden">
               {activeTab === "facts" && (
-                <FactsPanel facts={facts} summaries={summaries} onAdd={addFact} onDelete={deleteFact} onProfileCommand={handleProfileCommand} onConsolidate={runConsolidation} onSummarize={runSummaries} />
+                <FactsPanel facts={facts} summaries={summaries} onAdd={addFact} onDelete={deleteFact} onClear={clearFacts} onProfileCommand={handleProfileCommand} onConsolidate={runConsolidation} onSummarize={runSummaries} />
               )}
               {activeTab === "settings" && (
                 <SettingsPanel config={config} onSave={saveConfig} />

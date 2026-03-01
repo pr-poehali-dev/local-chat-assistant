@@ -39,29 +39,35 @@ CATEGORY_MAP = {
 VALID_CATEGORIES = {"О компании", "Финансы", "Команда", "Рынок", "Другое"}
 
 MEMORY_GATE_SYSTEM = (
-    "You are a memory gate for a personal AI assistant. "
-    "Your job: decide whether this conversation exchange reveals facts worth storing long-term.\n\n"
+    "You are a knowledge base builder for a personal AI assistant. "
+    "The PURPOSE is not curiosity — it is to build a reliable, structured knowledge base for future personalised help.\n\n"
+    "The user's name may be known from context. NEVER write 'пользователь' — use the actual name if mentioned, otherwise use their role (e.g. 'владелец', 'Андрей').\n\n"
     "Return ONLY valid JSON, no markdown:\n"
     '{"should_write":false,"reason":"...","facts":[]}\n\n'
     "SAVE facts that are:\n"
-    "- Stable preferences (work style, likes/dislikes, communication style)\n"
-    "- Permanent business parameters (team size, metrics, product, customer segment, pricing)\n"
-    "- Explicit decisions / policies ('we always do X', 'we never do Y')\n"
-    "- Personal context about activity (role, projects, goals, industry)\n\n"
+    "- Identity: full name, age, location, family background\n"
+    "- Business (Joywood): products, sales, clients, team, history, values, goals\n"
+    "- Personal projects separate from main business — describe clearly and note they are personal/separate\n"
+    "- Stable preferences, work style, recurring patterns\n"
+    "- Explicit decisions, plans, challenges\n\n"
     "DO NOT save:\n"
-    "- One-time actions ('today I did...', 'we just launched...')\n"
-    "- Draft thoughts or hypotheticals\n"
-    "- Anything already in EXISTING FACTS (avoid duplicates)\n"
+    "- Small talk with zero informational value\n"
     "- Assistant suggestions or questions\n"
-    "- Greetings, small talk\n\n"
+    "- Exact duplicates of EXISTING FACTS\n\n"
     "Rules:\n"
-    "- Max 2 facts per call. If nothing qualifies → should_write=false, facts=[]\n"
-    "- When in doubt → should_write=false\n"
-    "- Each fact: text (short atomic sentence), "
-    "category (О компании|Финансы|Команда|Рынок|Другое), "
-    "subcategory (1-3 words: Продукты/Клиенты/Команда/Маркетинг/Операции/Риски/Юнит-экономика/Процессы/Общее), "
-    "confidence 0..1\n"
-    "- reason: one short sentence explaining your decision (for logs only)"
+    "- Extract ALL facts the conversation contains — no artificial limit\n"
+    "- Each fact text must be SELF-CONTAINED: someone reading it without context must understand it fully\n"
+    "  BAD: 'Пользователь создаёт приложение'\n"
+    "  GOOD: 'Андрей разрабатывает личное приложение персонального ИИ-ассистента с памятью — отдельный проект, не связанный с Joywood'\n"
+    "- CRITICAL category assignment:\n"
+    "  * 'О компании' = ONLY Joywood business facts (products, sales, operations, clients, company history)\n"
+    "  * 'Другое' = personal life, identity, personal projects NOT related to Joywood\n"
+    "  * 'Финансы' = Joywood finances only\n"
+    "  * 'Рынок' = Joywood market, competitors, customer segments\n"
+    "  * 'Команда' = Joywood employees and partners\n"
+    "- subcategory: 1-3 descriptive words\n"
+    "- confidence 0..1 — skip if < 0.6\n"
+    "- reason: one short sentence for logs"
 )
 
 SUBCATEGORY_LIMIT = 20
@@ -169,6 +175,8 @@ def route(event: dict) -> dict:
             return facts_update(rid, body)
         if a == "reindex":
             return facts_reindex()
+        if a == "clear":
+            return facts_clear()
         if a == "delete" or (not a and method == "DELETE"):
             return facts_delete(rid)
 
@@ -425,7 +433,7 @@ def _memory_gate(session_id: str, user_msg: str, assistant_msg: str) -> None:
 
         ts = now_iso()
         inserted = 0
-        for item in candidates[:2]:
+        for item in candidates:
             if not isinstance(item, dict):
                 continue
             text = (item.get("text") or "").strip()
@@ -502,6 +510,19 @@ def facts_list(qs: dict) -> dict:
             rows = rows_to_list(cur)
         con.commit()
         return ok(rows)
+    finally:
+        con.close()
+
+
+def facts_clear() -> dict:
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute("DELETE FROM category_summaries")
+            cur.execute("DELETE FROM facts")
+            deleted = cur.rowcount
+        con.commit()
+        return ok({"cleared": deleted})
     finally:
         con.close()
 

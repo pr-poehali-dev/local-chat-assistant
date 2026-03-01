@@ -126,6 +126,8 @@ export const api = {
       request<ApiProfile>("facts", "profile", { qs: { limit_per_section: String(limitPerSection) } }),
     update: (id: string, data: { text?: string; category?: string; subcategory?: string }) =>
       request<{ updated: string }>("facts", "update", { method: "POST", id, body: JSON.stringify(data) }),
+    clear: () =>
+      request<{ cleared: number }>("facts", "clear", { method: "POST" }),
   },
 
   summaries: {
