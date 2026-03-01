@@ -453,13 +453,18 @@ Rules:
       }
 
       console.log("[GATE]", result.should_write, (result as { reason?: string }).reason ?? "");
+      console.log("[GATE] facts raw:", JSON.stringify(result.facts?.slice(0, 3)));
       if (!result.should_write || !result.facts?.length) return;
 
       const newFacts: Fact[] = [];
       for (const item of result.facts) {
-        if (!item.text || item.confidence < 0.6) continue;
+        console.log(`[GATE] item: conf=${item.confidence} cat=${item.category} text=${item.text?.slice(0,50)}`);
+        if (!item.text || item.confidence < 0.6) {
+          console.log(`[GATE] skip: text=${!!item.text} conf=${item.confidence}`);
+          continue;
+        }
         try {
-          const saved = await api.facts.create(item.text, item.category || "Другое", "memory_gate" as "manual", item.subcategory || undefined);
+          const saved = await api.facts.create(item.text, item.category || "Личное", "memory_gate" as "manual", item.subcategory || undefined);
           newFacts.push(apiFactToFact(saved));
           console.log(`[GATE] +fact [${item.category}/${item.subcategory}]: ${item.text}`);
         } catch (e) {
