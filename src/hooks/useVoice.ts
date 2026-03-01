@@ -5,10 +5,11 @@ export type VoiceState = "idle" | "recording" | "processing" | "speaking";
 interface UseVoiceOptions {
   baseUrl: string;
   apiKey: string;
+  speechRate?: number;
   onTranscript: (text: string) => void;
 }
 
-export function useVoice({ baseUrl, apiKey, onTranscript }: UseVoiceOptions) {
+export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript }: UseVoiceOptions) {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [error, setError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -127,6 +128,7 @@ export function useVoice({ baseUrl, apiKey, onTranscript }: UseVoiceOptions) {
       const audioBlob = await res.blob();
       const url = URL.createObjectURL(audioBlob);
       const audio = new Audio(url);
+      audio.playbackRate = Math.max(0.5, Math.min(2.0, speechRate));
       audioRef.current = audio;
 
       audio.onended = () => {

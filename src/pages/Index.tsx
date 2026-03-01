@@ -212,6 +212,7 @@ export default function Index() {
                   apiKey={config.apiKey}
                   baseUrl={config.baseUrl}
                   autoSpeak={config.autoSpeak}
+                  speechRate={config.speechRate}
                 />
               </div>
             </div>

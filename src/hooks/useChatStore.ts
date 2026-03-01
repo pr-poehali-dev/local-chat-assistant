@@ -37,6 +37,8 @@ export interface LLMConfig {
   antiDuplicates: boolean;
   topFacts: boolean;
   autoSpeak: boolean;
+  speechRate: number;
+  activePreset: string;
 }
 
 const CONSOLIDATION_SYSTEM = `You are a memory curator for a personal AI assistant.
@@ -99,6 +101,8 @@ const DEFAULT_CONFIG: LLMConfig = {
   antiDuplicates: true,
   topFacts: true,
   autoSpeak: false,
+  speechRate: 1.0,
+  activePreset: "custom",
 };
 
 function apiMsgToMsg(m: ApiMessage): Message {
@@ -144,6 +148,8 @@ function apiSettingsToConfig(s: ApiSettings): LLMConfig {
     antiDuplicates: toggles.antiDuplicates,
     topFacts: toggles.topFacts,
     autoSpeak: (toggles as Record<string, boolean>).autoSpeak ?? false,
+    speechRate: (toggles as Record<string, number>).speechRate ?? 1.0,
+    activePreset: (toggles as Record<string, string>).activePreset ?? "custom",
   };
 }
 
@@ -651,6 +657,9 @@ Rules:
           autoExtract: newConfig.autoExtract,
           antiDuplicates: newConfig.antiDuplicates,
           topFacts: newConfig.topFacts,
+          autoSpeak: newConfig.autoSpeak,
+          speechRate: newConfig.speechRate,
+          activePreset: newConfig.activePreset,
         },
       });
     } catch (_) {

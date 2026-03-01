@@ -2,6 +2,51 @@ import { useState } from "react";
 import Icon from "@/components/ui/icon";
 import type { LLMConfig } from "@/hooks/useChatStore";
 
+const ASSISTANT_PRESETS = [
+  {
+    id: "memory",
+    label: "Наполнение памяти",
+    icon: "BrainCircuit",
+    desc: "Любопытный, задаёт уточняющие вопросы, активно извлекает факты",
+    prompt: "Ты — любопытный и заинтересованный персональный ассистент. Твоя главная задача — узнать как можно больше о пользователе, его бизнесе, целях и контексте. Задавай уточняющие вопросы после каждого ответа. Проявляй искренний интерес. Помогай пользователю структурировать и артикулировать свои мысли. Не давай советов — только слушай, уточняй и помогай раскрыть детали.",
+  },
+  {
+    id: "advisor",
+    label: "Советник",
+    icon: "Briefcase",
+    desc: "Взвешенный аналитик, опирается на факты из памяти",
+    prompt: "Ты — опытный бизнес-советник. Опирайся на факты из памяти о пользователе и его бизнесе. Давай структурированные, взвешенные рекомендации. Всегда объясняй логику своих советов. Если информации недостаточно — уточняй перед тем как давать рекомендации.",
+  },
+  {
+    id: "brainstorm",
+    label: "Мозговой штурм",
+    icon: "Zap",
+    desc: "Генерирует идеи без критики, широко мыслит",
+    prompt: "Ты — креативный партнёр для мозгового штурма. Генерируй много идей без самоцензуры и критики. Мысли нестандартно, предлагай неожиданные подходы. Развивай идеи пользователя, добавляй к ним новые грани. Критику оставь на потом — сейчас только генерация.",
+  },
+  {
+    id: "critic",
+    label: "Критик",
+    icon: "AlertTriangle",
+    desc: "Ищет слабые места, играет роль скептика",
+    prompt: "Ты — конструктивный критик и скептик. Ищи слабые места в идеях и планах пользователя. Задавай неудобные вопросы. Играй роль инвестора или придирчивого клиента. Будь честен, но уважителен. Цель — помочь усилить идею, найдя её уязвимости.",
+  },
+  {
+    id: "brief",
+    label: "Кратко и по делу",
+    icon: "AlignLeft",
+    desc: "Максимально лаконично, только суть",
+    prompt: "Отвечай максимально кратко и по делу. Никакой воды, вступлений и заключений. Только суть. Если можно ответить одним предложением — ответь одним предложением. Используй списки только когда это реально упрощает восприятие.",
+  },
+  {
+    id: "custom",
+    label: "Свой промпт",
+    icon: "Settings2",
+    desc: "Использует системный промпт из поля ниже",
+    prompt: "",
+  },
+];
+
 const PRESET_MODELS = [
   { label: "GPT-4o", value: "gpt-4o" },
   { label: "GPT-4o mini", value: "gpt-4o-mini" },
@@ -158,11 +203,41 @@ export default function SettingsPanel({ config, onSave }: SettingsPanelProps) {
 
         <section>
           <h3 className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest mb-3">
+            Режим ассистента
+          </h3>
+          <div className="space-y-1.5">
+            {ASSISTANT_PRESETS.map((preset) => {
+              const active = local.activePreset === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  onClick={() => {
+                    update("activePreset", preset.id);
+                    if (preset.id !== "custom") update("systemPrompt", preset.prompt);
+                  }}
+                  className={`w-full text-left px-3 py-2.5 border transition-colors flex items-start gap-3 ${
+                    active ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/60"
+                  }`}
+                >
+                  <Icon name={preset.icon as Parameters<typeof Icon>[0]["name"]} size={15} className="flex-shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-sm font-medium block">{preset.label}</span>
+                    <span className="text-xs text-muted-foreground">{preset.desc}</span>
+                  </div>
+                  {active && <Icon name="Check" size={13} className="ml-auto flex-shrink-0 mt-1" />}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest mb-3">
             Системный промпт
           </h3>
           <textarea
             value={local.systemPrompt}
-            onChange={(e) => update("systemPrompt", e.target.value)}
+            onChange={(e) => { update("systemPrompt", e.target.value); update("activePreset", "custom"); }}
             rows={5}
             className="w-full resize-none border border-border bg-card px-3 py-2.5 text-sm leading-relaxed focus:outline-none focus:border-foreground transition-colors"
           />
@@ -203,18 +278,39 @@ export default function SettingsPanel({ config, onSave }: SettingsPanelProps) {
           <h3 className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest mb-3">
             Голос
           </h3>
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={!!local.autoSpeak}
-              onChange={(e) => update("autoSpeak", e.target.checked)}
-              className="mt-0.5 accent-foreground"
-            />
+          <div className="space-y-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!local.autoSpeak}
+                onChange={(e) => update("autoSpeak", e.target.checked)}
+                className="mt-0.5 accent-foreground"
+              />
+              <div>
+                <span className="text-sm font-medium block">Авто-озвучка</span>
+                <span className="text-xs text-muted-foreground">Каждый ответ ассистента будет автоматически озвучен (требует API с поддержкой TTS)</span>
+              </div>
+            </label>
             <div>
-              <span className="text-sm font-medium block">Авто-озвучка</span>
-              <span className="text-xs text-muted-foreground">Каждый ответ ассистента будет автоматически озвучен (требует API с поддержкой TTS)</span>
+              <label className="text-xs font-medium block mb-1.5">
+                Скорость речи <span className="font-mono text-muted-foreground">{local.speechRate?.toFixed(1) ?? "1.0"}×</span>
+              </label>
+              <input
+                type="range"
+                min="0.5"
+                max="2.0"
+                step="0.1"
+                value={local.speechRate ?? 1.0}
+                onChange={(e) => update("speechRate", parseFloat(e.target.value))}
+                className="w-full accent-foreground"
+              />
+              <div className="flex justify-between text-[10px] font-mono text-muted-foreground mt-0.5">
+                <span>медленно</span>
+                <span>обычно</span>
+                <span>быстро</span>
+              </div>
             </div>
-          </label>
+          </div>
         </section>
 
         <button

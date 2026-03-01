@@ -12,6 +12,7 @@ interface ChatPanelProps {
   apiKey?: string;
   baseUrl?: string;
   autoSpeak?: boolean;
+  speechRate?: number;
 }
 
 export default function ChatPanel({
@@ -23,6 +24,7 @@ export default function ChatPanel({
   apiKey = "",
   baseUrl = "",
   autoSpeak = false,
+  speechRate = 1.0,
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const [speakingId, setSpeakingId] = useState<string | null>(null);
@@ -41,6 +43,7 @@ export default function ChatPanel({
   const { voiceState, error: voiceError, startRecording: _startRecording, stopRecording: _stopRecording, speak, stopSpeaking } = useVoice({
     baseUrl,
     apiKey,
+    speechRate,
     onTranscript: handleTranscript,
   });
 
