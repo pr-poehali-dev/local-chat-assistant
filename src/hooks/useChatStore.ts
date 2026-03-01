@@ -272,6 +272,21 @@ export function useChatStore() {
     [sessions, loadSessionMessages]
   );
 
+  const deleteSession = useCallback(async (id: string) => {
+    try {
+      await api.sessions.delete(id);
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.id !== id);
+        if (id === activeSessionId && next.length > 0) {
+          setActiveSessionId(next[0].id);
+        }
+        return next;
+      });
+    } catch (e) {
+      console.warn("delete session", e);
+    }
+  }, [activeSessionId]);
+
   const runConsolidation = useCallback(async (): Promise<string> => {
     if (!config.apiKey || !config.baseUrl) return "LLM не подключён";
     if (facts.length === 0) return "База знаний пуста — нечего структурировать";
@@ -727,6 +742,7 @@ Rules:
     lastSavedCount,
     createSession,
     selectSession,
+    deleteSession,
     sendMessage,
     addFact,
     deleteFact,

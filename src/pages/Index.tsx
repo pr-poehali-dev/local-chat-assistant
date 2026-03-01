@@ -41,6 +41,7 @@ export default function Index() {
     lastSavedCount,
     createSession,
     selectSession,
+    deleteSession,
     sendMessage,
     addFact,
     deleteFact,
@@ -188,6 +189,7 @@ export default function Index() {
                 activeSessionId={activeSessionId}
                 onSelectSession={handleSelectSession}
                 onNewSession={handleNewSession}
+                onDeleteSession={deleteSession}
               />
             </div>
           </div>
