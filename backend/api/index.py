@@ -398,10 +398,10 @@ def _maybe_extract_facts(session_id: str, assistant_content: str) -> None:
 def facts_list(qs: dict) -> dict:
     category = qs.get("category", "")
     q = qs.get("q", "")
-    try:
-        limit = int(qs.get("limit", 200))
-    except Exception:
-        limit = 200
+    # Без лимита по умолчанию — грузим все факты
+    # limit=N в запросе позволяет явно ограничить (например для контекста LLM)
+    raw_limit = qs.get("limit", "")
+    limit = int(raw_limit) if raw_limit.isdigit() else None
 
     conditions, params = [], []
     if category and category != "Все":
@@ -412,14 +412,17 @@ def facts_list(qs: dict) -> dict:
         params.append(f"%{q}%")
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    params.append(limit)
+    limit_clause = ""
+    if limit:
+        limit_clause = " LIMIT %s"
+        params.append(limit)
 
     con = get_db()
     try:
         with con.cursor() as cur:
             cur.execute(
                 f"SELECT id, text, category, source, created_at, updated_at "
-                f"FROM facts {where} ORDER BY created_at DESC LIMIT %s",
+                f"FROM facts {where} ORDER BY created_at DESC{limit_clause}",
                 params,
             )
             rows = rows_to_list(cur)

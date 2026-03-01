@@ -289,6 +289,14 @@ export function useChatStore() {
         )
       );
       setIsThinking(false);
+
+      // Live-обновление фактов: бэкенд мог извлечь новые после ответа
+      try {
+        const freshFacts = await api.facts.list();
+        setFacts(freshFacts.map(apiFactToFact));
+      } catch (e) {
+        console.warn("refresh facts", e);
+      }
     },
     [activeSessionId, activeSession, config, facts, isThinking]
   );
