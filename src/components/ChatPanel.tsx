@@ -100,7 +100,7 @@ export default function ChatPanel({
       setSpeakingId(last.id);
       speak(last.content).finally(() => setSpeakingId(null));
     }
-  }, [messages, autoSpeak, apiKey, baseUrl, speak]);
+  }, [messages, autoSpeak, apiKey, baseUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSpeakToggle = async (msg: Message) => {
     if (speakingId === msg.id) {

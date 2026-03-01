@@ -117,6 +117,7 @@ export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript }: Us
           input: text.slice(0, 4096),
           voice: "alloy",
           response_format: "mp3",
+          speed: Math.max(0.25, Math.min(4.0, speechRate)),
         }),
       });
 
@@ -128,7 +129,6 @@ export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript }: Us
       const audioBlob = await res.blob();
       const url = URL.createObjectURL(audioBlob);
       const audio = new Audio(url);
-      audio.playbackRate = Math.max(0.5, Math.min(2.0, speechRate));
       audioRef.current = audio;
 
       audio.onended = () => {
@@ -148,7 +148,7 @@ export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript }: Us
       setError(e instanceof Error ? e.message : "Ошибка озвучки");
       setVoiceState("idle");
     }
-  }, [apiKey, baseUrl, voiceState, stopSpeaking]);
+  }, [apiKey, baseUrl, speechRate, voiceState, stopSpeaking]);
 
   return { voiceState, error, startRecording, stopRecording, speak, stopSpeaking };
 }
