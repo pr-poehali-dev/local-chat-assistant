@@ -216,7 +216,6 @@ export function useChatStore() {
           const factContext =
             facts.length > 0
               ? `\n\nФакты о пользователе:\n${facts
-                  .slice(0, 10)
                   .map((f) => `- [${f.category}] ${f.content}`)
                   .join("\n")}`
               : "";

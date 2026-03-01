@@ -7,9 +7,10 @@ interface ChatPanelProps {
   isThinking: boolean;
   onSend: (text: string) => void;
   sessionId: string;
+  model?: string;
 }
 
-export default function ChatPanel({ messages, isThinking, onSend, sessionId }: ChatPanelProps) {
+export default function ChatPanel({ messages, isThinking, onSend, sessionId, model }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -122,9 +123,17 @@ export default function ChatPanel({ messages, isThinking, onSend, sessionId }: C
             <Icon name="ArrowUp" size={18} />
           </button>
         </div>
-        <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground font-mono">
-          <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground inline-block" />
-          <span>Сессия: {sessionId.slice(0, 12)}</span>
+        <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+          <div className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground inline-block" />
+            <span>Сессия: {sessionId.slice(0, 12)}</span>
+          </div>
+          {model && (
+            <div className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-foreground inline-block" />
+              <span>{model}</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -191,6 +191,7 @@ export default function Index() {
                   isThinking={isThinking}
                   onSend={sendMessage}
                   sessionId={activeSessionId}
+                  model={connected ? config.model : undefined}
                 />
               </div>
             </div>
