@@ -5,6 +5,7 @@ import HistoryPanel from "@/components/HistoryPanel";
 import FactsPanel from "@/components/FactsPanel";
 import SettingsPanel from "@/components/SettingsPanel";
 import { useChatStore } from "@/hooks/useChatStore";
+import { ASSISTANT_PRESETS } from "@/lib/presets";
 
 type Tab = "chat" | "history" | "facts" | "settings";
 
@@ -192,7 +193,20 @@ export default function Index() {
               <header className="h-14 border-b border-border px-6 flex items-center justify-between flex-shrink-0">
                 <div>
                   <h1 className="text-sm font-semibold">{activeSession?.title ?? "Диалог"}</h1>
-                  <p className="text-[11px] font-mono text-muted-foreground">{PANEL_TITLES.chat}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {(() => {
+                      const preset = ASSISTANT_PRESETS.find(p => p.id === config.activePreset);
+                      return preset ? (
+                        <button
+                          onClick={() => setActiveTab("settings")}
+                          className="flex items-center gap-1 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          <Icon name={preset.icon as Parameters<typeof Icon>[0]["name"]} size={10} />
+                          {preset.label}
+                        </button>
+                      ) : null;
+                    })()}
+                  </div>
                 </div>
                 <button
                   onClick={handleNewSession}

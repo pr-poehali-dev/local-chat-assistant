@@ -157,7 +157,16 @@ export function useChatStore() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   const [facts, setFacts] = useState<Fact[]>([]);
-  const [config, setConfig] = useState<LLMConfig>(DEFAULT_CONFIG);
+  const loadLocalVoicePrefs = (): Partial<LLMConfig> => {
+    try {
+      return {
+        autoSpeak: localStorage.getItem("autoSpeak") === "true",
+        speechRate: parseFloat(localStorage.getItem("speechRate") ?? "1.0"),
+      };
+    } catch { return {}; }
+  };
+
+  const [config, setConfig] = useState<LLMConfig>({ ...DEFAULT_CONFIG, ...loadLocalVoicePrefs() });
   const [isThinking, setIsThinking] = useState(false);
   const [loading, setLoading] = useState(true);
   const [appError, setAppError] = useState<string | null>(null);
@@ -645,6 +654,8 @@ Rules:
 
   const saveConfig = useCallback(async (newConfig: LLMConfig) => {
     setConfig(newConfig);
+    try { localStorage.setItem("autoSpeak", String(newConfig.autoSpeak)); } catch { /* */ }
+    try { localStorage.setItem("speechRate", String(newConfig.speechRate)); } catch { /* */ }
     try {
       await api.settings.save({
         base_url: newConfig.baseUrl,
