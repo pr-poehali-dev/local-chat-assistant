@@ -2,11 +2,35 @@ import { useState, useEffect } from "react";
 import Icon from "@/components/ui/icon";
 import type { Fact } from "@/hooks/useChatStore";
 
-const CATEGORIES = ["О компании", "Финансы", "Команда", "Рынок", "Другое"];
+// Word-level diff
+type DiffToken = { text: string; type: "same" | "added" | "removed" };
+
+function computeDiff(oldText: string, newText: string): DiffToken[] {
+  const oldWords = oldText.split(/(\s+)/);
+  const newWords = newText.split(/(\s+)/);
+  const m = oldWords.length, n = newWords.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--)
+    for (let j = n - 1; j >= 0; j--)
+      dp[i][j] = oldWords[i] === newWords[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const result: DiffToken[] = [];
+  let i = 0, j = 0;
+  while (i < m || j < n) {
+    if (i < m && j < n && oldWords[i] === newWords[j]) {
+      result.push({ text: oldWords[i], type: "same" }); i++; j++;
+    } else if (j < n && (i >= m || dp[i][j + 1] >= dp[i + 1][j])) {
+      result.push({ text: newWords[j], type: "added" }); j++;
+    } else {
+      result.push({ text: oldWords[i], type: "removed" }); i++;
+    }
+  }
+  return result;
+}
 
 interface FactsPanelProps {
   facts: Fact[];
   summaries?: Record<string, string>;
+  prevSummaries?: Record<string, string>;
   newFactIds?: Set<string>;
   updatedSummaryCategories?: Set<string>;
   onAdd: (content: string, category: string) => void;
@@ -25,6 +49,7 @@ interface FactsPanelProps {
 export default function FactsPanel({
   facts,
   summaries = {},
+  prevSummaries = {},
   newFactIds = new Set(),
   updatedSummaryCategories = new Set(),
   onAdd,
@@ -46,8 +71,9 @@ export default function FactsPanel({
   const [summarizing, setSummarizing] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [consolidateResult, setConsolidateResult] = useState<string | null>(null);
-  const [openCategories, setOpenCategories] = useState<Set<string>>(new Set(["О компании"]));
+  const [openCategories, setOpenCategories] = useState<Set<string>>(new Set());
   const [openSubcategories, setOpenSubcategories] = useState<Set<string>>(new Set());
+  const [diffCategories, setDiffCategories] = useState<Set<string>>(new Set());
   const [voiceComment, setVoiceComment] = useState<{ cat: string; text: string } | null>(null);
   const [recording, setRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
@@ -83,12 +109,18 @@ export default function FactsPanel({
     try {
       const result = await onSummarize();
       setConsolidateResult(result);
-      // Раскрываем категории с обновлённым резюме
+      // Раскрываем категории с обновлённым резюме и включаем diff-режим
       setOpenCategories((prev) => {
         const next = new Set(prev);
         updatedSummaryCategories.forEach((c) => next.add(c));
         return next;
       });
+      // Включаем diff только для категорий где было старое резюме
+      const diffCats = new Set<string>();
+      updatedSummaryCategories.forEach((c) => {
+        if (prevSummaries[c]) diffCats.add(c);
+      });
+      setDiffCategories(diffCats);
     } catch {
       setConsolidateResult("Ошибка резюмирования");
     } finally {
@@ -189,10 +221,8 @@ export default function FactsPanel({
     }
   };
 
-  // Строим дерево: category → subcategory → facts
+  // Строим дерево из реальных категорий фактов + категорий у которых есть резюме
   const tree: Record<string, Record<string, Fact[]>> = {};
-  for (const cat of CATEGORIES) tree[cat] = {};
-
   for (const fact of facts) {
     const cat = fact.category || "Другое";
     if (!tree[cat]) tree[cat] = {};
@@ -200,6 +230,11 @@ export default function FactsPanel({
     if (!tree[cat][sub]) tree[cat][sub] = [];
     tree[cat][sub].push(fact);
   }
+  // Добавляем категории из резюме (даже если фактов там нет)
+  for (const cat of Object.keys(summaries)) {
+    if (!tree[cat]) tree[cat] = {};
+  }
+  const allCats = Object.keys(tree).sort();
 
   const totalByCat = (cat: string) =>
     Object.values(tree[cat] || {}).reduce((s, arr) => s + arr.length, 0);
@@ -319,17 +354,18 @@ export default function FactsPanel({
           </div>
         )}
 
-        {CATEGORIES.map((cat) => {
+        {allCats.map((cat) => {
           const count = totalByCat(cat);
-          if (count === 0 && !summaries[cat]) return null;
           const isOpen = openCategories.has(cat);
-          const subcats = Object.entries(tree[cat]);
+          const subcats = Object.entries(tree[cat] || {});
           const newCount = newCountByCat(cat);
           const summaryUpdated = updatedSummaryCategories.has(cat);
+          const inDiffMode = diffCategories.has(cat);
+          const oldSummary = prevSummaries[cat];
+          const newSummary = summaries[cat];
 
           return (
             <div key={cat} className="border-b border-border last:border-b-0">
-              {/* Категория */}
               <button
                 onClick={() => toggleCategory(cat)}
                 className="w-full flex items-center gap-2 px-6 py-3 hover:bg-secondary transition-colors text-left"
@@ -341,7 +377,7 @@ export default function FactsPanel({
                     +{newCount} new
                   </span>
                 )}
-                {summaryUpdated && !newCount && (
+                {summaryUpdated && (
                   <span className="text-[10px] font-mono px-1.5 py-0.5 bg-amber-500/15 text-amber-500 rounded-sm">
                     резюме ↑
                   </span>
@@ -351,42 +387,73 @@ export default function FactsPanel({
 
               {isOpen && (
                 <div className="pb-1">
-                  {summaries[cat] && (
-                    <div className={`mx-4 mb-2 px-4 py-3 border text-xs leading-relaxed whitespace-pre-wrap relative group/summary transition-colors ${
-                      summaryUpdated
-                        ? "border-amber-400/50 bg-amber-500/5 text-foreground"
-                        : "border-border bg-secondary/50 text-muted-foreground"
-                    }`}>
-                      {summaryUpdated && (
-                        <span className="absolute top-2 right-2 text-[10px] font-mono text-amber-500 flex items-center gap-1">
-                          <Icon name="RefreshCw" size={10} />
-                          обновлено
-                        </span>
-                      )}
-                      <p className={summaryUpdated ? "pr-16" : ""}>{summaries[cat]}</p>
-                      {voiceAvailable && (
-                        <div className="mt-2 pt-2 border-t border-border/50 flex items-center gap-2">
-                          {recording && voiceComment?.cat === cat ? (
+                  {newSummary && (
+                    <div className="mx-4 mb-2 border border-border bg-secondary/30">
+                      {/* Тулбар резюме */}
+                      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/60">
+                        <span className="text-[10px] font-mono text-muted-foreground flex-1">Резюме раздела</span>
+                        {inDiffMode && oldSummary ? (
+                          <button
+                            onClick={() => setDiffCategories((p) => { const n = new Set(p); n.delete(cat); return n; })}
+                            className="text-[10px] font-mono text-amber-500 hover:text-foreground flex items-center gap-1 transition-colors"
+                          >
+                            <Icon name="Eye" size={10} />
+                            скрыть diff
+                          </button>
+                        ) : (oldSummary && summaryUpdated) ? (
+                          <button
+                            onClick={() => setDiffCategories((p) => new Set([...p, cat]))}
+                            className="text-[10px] font-mono text-amber-500 hover:text-foreground flex items-center gap-1 transition-colors"
+                          >
+                            <Icon name="GitCompare" size={10} />
+                            показать изменения
+                          </button>
+                        ) : null}
+                        {voiceAvailable && (
+                          recording && voiceComment?.cat === cat ? (
                             <button
                               onMouseUp={stopVoiceComment}
                               onTouchEnd={stopVoiceComment}
-                              className="flex items-center gap-1.5 text-[11px] font-mono text-red-500 animate-pulse"
+                              className="text-[10px] font-mono text-red-500 animate-pulse flex items-center gap-1"
                             >
-                              <Icon name="MicOff" size={11} />
-                              Отпустите для отправки...
+                              <Icon name="MicOff" size={10} />
+                              отпустите...
                             </button>
                           ) : (
                             <button
                               onMouseDown={() => startVoiceComment(cat)}
                               onTouchStart={() => startVoiceComment(cat)}
                               disabled={recording}
-                              className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30"
+                              className="text-[10px] font-mono text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors disabled:opacity-30"
                             >
-                              <Icon name="Mic" size={11} />
-                              Прокомментировать голосом
+                              <Icon name="Mic" size={10} />
+                              голос
                             </button>
-                          )}
+                          )
+                        )}
+                      </div>
+
+                      {/* Diff или обычный текст */}
+                      {inDiffMode && oldSummary ? (
+                        <div className="px-4 py-3 text-xs leading-relaxed">
+                          <div className="text-[10px] font-mono text-muted-foreground mb-2 flex items-center gap-2">
+                            <span className="px-1 bg-red-500/15 text-red-500">— удалено</span>
+                            <span className="px-1 bg-green-500/15 text-green-500">+ добавлено</span>
+                          </div>
+                          <p className="whitespace-pre-wrap">
+                            {computeDiff(oldSummary, newSummary).map((token, idx) => (
+                              token.type === "same" ? (
+                                <span key={idx}>{token.text}</span>
+                              ) : token.type === "added" ? (
+                                <mark key={idx} className="bg-green-500/20 text-green-700 dark:text-green-300 rounded-sm">{token.text}</mark>
+                              ) : (
+                                <del key={idx} className="bg-red-500/15 text-red-500 rounded-sm">{token.text}</del>
+                              )
+                            ))}
+                          </p>
                         </div>
+                      ) : (
+                        <p className="px-4 py-3 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">{newSummary}</p>
                       )}
                     </div>
                   )}

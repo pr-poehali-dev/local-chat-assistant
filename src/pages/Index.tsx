@@ -52,6 +52,7 @@ export default function Index() {
     clearNewFactIds,
     updatedSummaryCategories,
     clearUpdatedSummaries,
+    prevSummaries,
   } = store;
 
   const handleNewSession = () => {
@@ -306,6 +307,7 @@ export default function Index() {
                 <FactsPanel
                   facts={facts}
                   summaries={summaries}
+                  prevSummaries={prevSummaries}
                   newFactIds={newFactIds}
                   updatedSummaryCategories={updatedSummaryCategories}
                   onAdd={addFact}

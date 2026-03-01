@@ -57,33 +57,32 @@ Return ONLY valid JSON (no markdown):
 Rules:
 - Merge near-duplicate facts (same meaning, different wording) → keep best phrasing
 - Split overcrowded subcategories if needed, create new descriptive ones
-- Rename vague subcategories (null/"Общее"/"Ассортимент" used for non-product info) → give proper descriptive names based on content
 - ALWAYS fix wrong category and subcategory assignments — this is critical:
-  * Personal info (name, age, family, location, hobbies) → category "Другое", subcategory "Личное" or specific (e.g. "Семья", "Возраст")
-  * Owner/founder info → category "О компании", subcategory "Владелец" or "Основатель"
-  * Personal projects NOT related to Joywood (e.g. this AI assistant app) → category "Другое", subcategory "Личный проект"
-  * Company history, founding story → subcategory "История"
-  * Products/goods → subcategory "Ассортимент" (ONLY for actual product descriptions)
-  * Mission, values → subcategory "Миссия"
-  * Contacts, address, website → subcategory "Контакты"
+  * Personal identity (name, surname, age, family, location) → category "Личное", subcategory "Имя и фамилия" / "Семья" / "Локация" / "Возраст"
+  * Personal projects NOT related to main business → category "Личные проекты"
+  * Main business facts → category matching the business name or "Бизнес"
+  * Finances → category "Финансы"
+  * Team/partners → category "Команда"
+  * Market/competitors/clients → category "Рынок"
+- You MAY create NEW categories if none of the existing ones fit — choose a clear Russian name
+- Do NOT force-assign everything to "Другое" — use specific meaningful categories
 - Delete facts that are clearly outdated, trivial or contradicted by better facts
 - Keep atomic facts (one fact = one sentence)
 - Preserve all IDs exactly as given
-- If nothing to improve → return {"operations":[], "summary":"All facts look good"}
-- Available categories: О компании, Финансы, Команда, Рынок, Другое`;
+- If nothing to improve → return {"operations":[], "summary":"All facts look good"}`;
 
 const MEMORY_GATE_SYSTEM = `You are a knowledge base builder for a personal AI assistant.
 The PURPOSE of this memory is not curiosity — it is to build a reliable, structured knowledge base so the assistant can give accurate, personalised help in the future.
 
-The user's name is known from context (e.g. Андрей). NEVER write "пользователь" — always use the actual name if mentioned anywhere in conversation or existing facts. If name is unknown, write "владелец" or describe their role.
+The user's name may appear in conversation. NEVER write "пользователь" in fact text — always use the actual name (e.g. "Андрей"), or their role if name is unknown.
 
 Return ONLY valid JSON (no markdown):
 {"should_write":false,"reason":"...","facts":[]}
 
 SAVE facts that are:
-- Identity: full name, age, location, family, background
-- Business (Joywood): product, sales channels, clients, team, history, values, goals
-- Personal projects separate from main business: describe them clearly and note they are personal/separate
+- Identity: full name, surname, age, location, family, background
+- Business info: product, sales channels, clients, team, history, values, goals
+- Personal projects separate from main business — describe clearly, note they are separate
 - Stable preferences, work style, recurring patterns
 - Explicit decisions, plans, challenges
 
@@ -93,18 +92,19 @@ DO NOT save:
 - Exact duplicates of EXISTING FACTS
 
 Rules:
-- Use the person's actual name in fact text, not "пользователь"
-- Each fact must be SELF-CONTAINED and specific — someone reading it without context must understand it fully
-  BAD: "Пользователь создаёт приложение" 
-  GOOD: "Андрей разрабатывает личное приложение персонального ИИ-ассистента с памятью — отдельный проект, не связанный с Joywood"
+- Use the person's actual name in fact text, NEVER "пользователь"
+- Each fact must be SELF-CONTAINED — someone reading without context must understand it fully
 - Decompose stories into separate atomic facts (one fact = one sentence)
-- CRITICAL — category assignment:
-  * "О компании" = ONLY Joywood business facts (products, sales, operations, clients, company history)
-  * "Другое" = personal life, identity, personal projects NOT related to Joywood
-  * "Финансы" = Joywood finances (revenue, costs, investments)
-  * "Рынок" = Joywood market, competitors, customer segments
-  * "Команда" = Joywood employees and partners
-- subcategory: 1-3 descriptive words
+- Choose category freely — pick the most meaningful Russian name:
+  * Personal identity (name, surname, age, family, location) → "Личное"
+  * Personal projects not related to main business → "Личные проекты"
+  * Main business → use the business name or "Бизнес"
+  * Finances → "Финансы"
+  * Team → "Команда"
+  * Market/clients/competitors → "Рынок"
+  * You MAY create new category names if none fit — be specific, not generic
+  * Avoid "Другое" unless truly uncategorizable
+- subcategory: 1-3 descriptive words (e.g. "Имя и фамилия", "История бизнеса", "Миссия")
 - confidence 0..1 — skip if < 0.6
 - reason: one short sentence for logs`;
 
@@ -192,6 +192,7 @@ export function useChatStore() {
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [newFactIds, setNewFactIds] = useState<Set<string>>(new Set());
   const [updatedSummaryCategories, setUpdatedSummaryCategories] = useState<Set<string>>(new Set());
+  const [prevSummaries, setPrevSummaries] = useState<Record<string, string>>({});
 
   const loadSessionMessages = useCallback(async (sessionId: string) => {
     try {
@@ -348,19 +349,22 @@ Rules:
     if (!config.apiKey || !config.baseUrl) return "LLM не подключён";
     if (facts.length === 0) return "Нет фактов для резюмирования";
 
-    const CATEGORIES = ["О компании", "Финансы", "Команда", "Рынок", "Другое"];
+    // Группируем по всем реальным категориям из фактов
     const byCategory: Record<string, Fact[]> = {};
-    for (const cat of CATEGORIES) byCategory[cat] = [];
     for (const f of facts) {
       const cat = f.category || "Другое";
       if (!byCategory[cat]) byCategory[cat] = [];
       byCategory[cat].push(f);
     }
+    const allCategories = Object.keys(byCategory);
+
+    // Сохраняем старые резюме для diff
+    setPrevSummaries({ ...summaries });
 
     const newSummaries: Record<string, string> = {};
     let updated = 0;
 
-    for (const cat of CATEGORIES) {
+    for (const cat of allCategories) {
       const catFacts = byCategory[cat];
       if (catFacts.length === 0) continue;
 
@@ -374,10 +378,10 @@ Rules:
         body: JSON.stringify({
           model: config.model,
           temperature: 0.2,
-          max_tokens: 800,
+          max_tokens: 1200,
           messages: [
             { role: "system", content: SUMMARY_SYSTEM },
-            { role: "user", content: `Категория: ${cat}\n\nФакты:\n${factLines}` },
+            { role: "user", content: `Раздел: ${cat}\n\nФакты:\n${factLines}` },
           ],
         }),
       });
@@ -734,5 +738,6 @@ Rules:
     clearNewFactIds: () => setNewFactIds(new Set()),
     updatedSummaryCategories,
     clearUpdatedSummaries: () => setUpdatedSummaryCategories(new Set()),
+    prevSummaries,
   };
 }

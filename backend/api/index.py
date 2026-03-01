@@ -24,19 +24,14 @@ CORS_HEADERS = {
     "Content-Type": "application/json",
 }
 
+# Нормализация только для старых/технических значений — свободные категории проходят как есть
 CATEGORY_MAP = {
     "profile":     "О компании",
     "preferences": "Другое",
-    "projects":    "Рынок",
+    "projects":    "Личные проекты",
     "constraints": "Другое",
     "other":       "Другое",
-    "о компании":  "О компании",
-    "финансы":     "Финансы",
-    "команда":     "Команда",
-    "рынок":       "Рынок",
-    "другое":      "Другое",
 }
-VALID_CATEGORIES = {"О компании", "Финансы", "Команда", "Рынок", "Другое"}
 
 MEMORY_GATE_SYSTEM = (
     "You are a knowledge base builder for a personal AI assistant. "
@@ -438,12 +433,13 @@ def _memory_gate(session_id: str, user_msg: str, assistant_msg: str) -> None:
                 continue
             text = (item.get("text") or "").strip()
             confidence = float(item.get("confidence", 0))
-            raw_cat = (item.get("category") or "другое").lower().strip()
+            raw_cat = (item.get("category") or "Другое").strip()
             raw_sub = (item.get("subcategory") or "").strip()
             if not text or confidence < 0.6:
                 continue
 
-            category = CATEGORY_MAP.get(raw_cat, "Другое")
+            # Используем категорию как есть (title case), только старые технические значения нормализуем
+            category = CATEGORY_MAP.get(raw_cat.lower(), raw_cat) if raw_cat.lower() in CATEGORY_MAP else raw_cat
             norm = _normalize(text)
             if norm in existing.get(category, set()):
                 print(f"[GATE] dup skip [{category}]: {text[:50]}")
