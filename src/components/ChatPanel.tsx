@@ -38,11 +38,21 @@ export default function ChatPanel({
     }, 100);
   }, [onSend]);
 
-  const { voiceState, error: voiceError, startRecording, stopRecording, speak, stopSpeaking } = useVoice({
+  const { voiceState, error: voiceError, startRecording: _startRecording, stopRecording: _stopRecording, speak, stopSpeaking } = useVoice({
     baseUrl,
     apiKey,
     onTranscript: handleTranscript,
   });
+
+  const startRecording = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    _startRecording();
+  }, [_startRecording]);
+
+  const stopRecording = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    _stopRecording();
+  }, [_stopRecording]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
