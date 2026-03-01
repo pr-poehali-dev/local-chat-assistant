@@ -66,6 +66,14 @@ MEMORY_GATE_SYSTEM = (
 
 SUBCATEGORY_LIMIT = 20
 
+# Категории → ключевые слова для маршрутизации
+CATEGORY_HINTS = {
+    "Финансы":    ["деньги","бюджет","выручка","прибыль","расход","инвестиц","цена","стоимость","оплата","финанс","доход","налог","кредит","долг","маржа","cac","ltv","arr","mrr"],
+    "Команда":    ["команда","сотрудник","найм","hr","человек","люди","разработчик","менеджер","директор","партнёр","коллег","штат","уволь","зарплат"],
+    "Рынок":      ["рынок","конкурент","клиент","сегмент","аудитор","спрос","продаж","маркетинг","канал","лид","сделк","b2b","b2c","ниша","тренд"],
+    "О компании": ["компания","продукт","сервис","запуск","стратег","цель","миссия","офис","юрлицо","ооо","ип","бренд","название","логотип"],
+}
+
 
 def get_db():
     con = psycopg2.connect(
@@ -159,6 +167,8 @@ def route(event: dict) -> dict:
             return facts_create(body)
         if a == "update":
             return facts_update(rid, body)
+        if a == "reindex":
+            return facts_reindex()
         if a == "delete" or (not a and method == "DELETE"):
             return facts_delete(rid)
 
@@ -327,6 +337,21 @@ def _llm_call(base_url: str, api_key: str, model: str, messages: list) -> str:
     return data["choices"][0]["message"]["content"]
 
 
+def _detect_category_hint(text: str) -> str | None:
+    """Определяет категорию по ключевым словам запроса для маршрутизации."""
+    t = text.lower()
+    scores = {cat: sum(1 for kw in hints if kw in t) for cat, hints in CATEGORY_HINTS.items()}
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else None
+
+
+def _keywords_from_text(text: str) -> list:
+    """Простое извлечение ключевых слов без LLM: существительные длиной ≥4, нормализованные."""
+    words = re.sub(r"[^\w\s]", " ", text.lower()).split()
+    stop = {"это","что","как","так","для","при","или","но","же","бы","ли","из","за","под","над","его","её","их","там","тут","уже","ещё","если","когда","also","that","this","with","from","have","will","been","they","your","their","more","some","very","just","than","then","into","over","after","before","about","which"}
+    return list(dict.fromkeys(w for w in words if len(w) >= 4 and w not in stop))[:12]
+
+
 def _memory_gate(session_id: str, user_msg: str, assistant_msg: str) -> None:
     con = get_db()
     try:
@@ -490,36 +515,57 @@ def _query_words(q: str) -> list:
 
 def facts_relevant(qs: dict) -> dict:
     q = (qs.get("q") or "").strip()
-    raw_limit = qs.get("limit", "8")
-    limit = int(raw_limit) if raw_limit.isdigit() else 8
+    raw_limit = qs.get("limit", "10")
+    limit = int(raw_limit) if raw_limit.isdigit() else 10
 
     con = get_db()
     try:
-        words = _query_words(q) if q else []
+        words = _keywords_from_text(q) if q else []
+        cat_hint = _detect_category_hint(q) if q else None
+        rows = []
 
         if words:
-            conditions = " OR ".join(["text ILIKE %s"] * len(words))
-            params = [f"%{w}%" for w in words]
+            kw_array = words  # GIN поиск: keywords && ARRAY[...]
+
+            # 1. Поиск через GIN-индекс по keywords (быстро, масштабируется)
             with con.cursor() as cur:
                 cur.execute(
-                    f"SELECT id, text, category, subcategory, source, created_at FROM facts "
-                    f"WHERE {conditions} ORDER BY created_at DESC LIMIT 50",
-                    params,
+                    "SELECT id, text, category, subcategory, keywords, source, created_at "
+                    "FROM facts WHERE keywords && %s::text[] "
+                    "ORDER BY updated_at DESC LIMIT 100",
+                    (kw_array,),
                 )
                 rows = rows_to_list(cur)
 
-            def score(row):
-                t = row["text"].lower()
-                return sum(1 for w in words if w in t)
+            # 2. Fallback: ILIKE по тексту если GIN ничего не дал
+            if not rows:
+                conditions = " OR ".join(["text ILIKE %s"] * len(words))
+                params = [f"%{w}%" for w in words]
+                with con.cursor() as cur:
+                    cur.execute(
+                        f"SELECT id, text, category, subcategory, keywords, source, created_at "
+                        f"FROM facts WHERE {conditions} ORDER BY updated_at DESC LIMIT 100",
+                        params,
+                    )
+                    rows = rows_to_list(cur)
+
+            # Ранжирование: кол-во совпавших keywords + бонус за совпадение категории
+            def score(row: dict) -> int:
+                fact_kw = set(row.get("keywords") or [])
+                query_kw = set(words)
+                hits = len(fact_kw & query_kw)
+                cat_bonus = 2 if cat_hint and row.get("category") == cat_hint else 0
+                return hits + cat_bonus
 
             rows.sort(key=score, reverse=True)
             rows = rows[:limit]
 
-        if not words or not rows:
+        # Fallback: последние N фактов (когда запрос пустой или ничего не нашли)
+        if not rows:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, text, category, subcategory, source, created_at FROM facts "
-                    "ORDER BY updated_at DESC LIMIT %s",
+                    "SELECT id, text, category, subcategory, keywords, source, created_at "
+                    "FROM facts ORDER BY updated_at DESC LIMIT %s",
                     (limit,),
                 )
                 rows = rows_to_list(cur)
@@ -579,18 +625,31 @@ def facts_create(body: dict) -> dict:
     source = body.get("source", "manual")
     raw_sub = (body.get("subcategory") or "").strip()
     subcategory = re.sub(r"\s+", " ", raw_sub)[:32].title() if raw_sub else None
+    # keywords = переданные явно ИЛИ извлечённые из текста
+    raw_kw = body.get("keywords") or []
+    keywords = raw_kw if isinstance(raw_kw, list) else _keywords_from_text(text)
+    if not keywords:
+        keywords = _keywords_from_text(text)
+    # Добавляем subcategory и category как дополнительные якоря
+    for anchor in [subcategory, category]:
+        if anchor:
+            for w in anchor.lower().split():
+                if w not in keywords:
+                    keywords.append(w)
+    keywords = keywords[:15]
+
     fid, ts = str(uuid.uuid4()), now_iso()
     con = get_db()
     try:
         with con.cursor() as cur:
             cur.execute(
-                "INSERT INTO facts (id, text, category, subcategory, source, created_at, updated_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (fid, text, category, subcategory, source, ts, ts),
+                "INSERT INTO facts (id, text, category, subcategory, keywords, source, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (fid, text, category, subcategory, keywords, source, ts, ts),
             )
         con.commit()
         return ok({"id": fid, "text": text, "category": category, "subcategory": subcategory,
-                   "source": source, "created_at": ts, "updated_at": ts}, 201)
+                   "keywords": keywords, "source": source, "created_at": ts, "updated_at": ts}, 201)
     finally:
         con.close()
 
@@ -599,16 +658,38 @@ def facts_update(fid: str, body: dict) -> dict:
     if not fid:
         return err("id required")
     fields, params = [], []
-    if "text" in body:
-        text = body["text"].strip()
-        if text:
-            fields.append("text = %s"); params.append(text)
-    if "category" in body:
-        fields.append("category = %s"); params.append(body["category"])
+    new_text = body.get("text", "").strip() if "text" in body else None
+    new_cat = body.get("category") if "category" in body else None
+    new_sub_raw = body.get("subcategory", "").strip() if "subcategory" in body else None
+    new_sub = re.sub(r"\s+", " ", new_sub_raw)[:32].title() if new_sub_raw else None
+
+    if new_text:
+        fields.append("text = %s"); params.append(new_text)
+    if new_cat:
+        fields.append("category = %s"); params.append(new_cat)
     if "subcategory" in body:
-        raw = (body["subcategory"] or "").strip()
-        sub = re.sub(r"\s+", " ", raw)[:32].title() if raw else None
-        fields.append("subcategory = %s"); params.append(sub)
+        fields.append("subcategory = %s"); params.append(new_sub)
+
+    # Пересчитываем keywords если изменился текст, категория или подкатегория
+    if new_text or new_cat or "subcategory" in body:
+        con2 = get_db()
+        try:
+            with con2.cursor() as cur:
+                cur.execute("SELECT text, category, subcategory FROM facts WHERE id = %s", (fid,))
+                existing = cur.fetchone()
+        finally:
+            con2.close()
+        if existing:
+            t = new_text or existing[0]
+            c = new_cat or existing[1]
+            s = new_sub or existing[2]
+            kw = _keywords_from_text(t)
+            for anchor in [s, c]:
+                if anchor:
+                    for w in anchor.lower().split():
+                        if w not in kw: kw.append(w)
+            fields.append("keywords = %s"); params.append(kw[:15])
+
     if not fields:
         return err("nothing to update")
     fields.append("updated_at = %s"); params.append(now_iso())
@@ -634,6 +715,40 @@ def facts_delete(fid: str) -> dict:
             cur.execute("DELETE FROM facts WHERE id = %s", (fid,))
         con.commit()
         return ok({"deleted": fid})
+    finally:
+        con.close()
+
+
+def facts_reindex() -> dict:
+    """Пересчитывает keywords для всех фактов у которых keywords пустые."""
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "SELECT id, text, category, subcategory FROM facts "
+                "WHERE keywords IS NULL OR keywords = '{}' ORDER BY created_at DESC LIMIT 500"
+            )
+            rows = cur.fetchall()
+
+        updated = 0
+        ts = now_iso()
+        for fid, text, category, subcategory in rows:
+            kw = _keywords_from_text(text)
+            for anchor in [subcategory, category]:
+                if anchor:
+                    for w in anchor.lower().split():
+                        if w not in kw:
+                            kw.append(w)
+            kw = kw[:15]
+            with con.cursor() as cur:
+                cur.execute(
+                    "UPDATE facts SET keywords = %s, updated_at = %s WHERE id = %s",
+                    (kw, ts, fid),
+                )
+            con.commit()
+            updated += 1
+
+        return ok({"reindexed": updated})
     finally:
         con.close()
 
