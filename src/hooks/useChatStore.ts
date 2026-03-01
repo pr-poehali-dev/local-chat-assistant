@@ -82,9 +82,11 @@ DO NOT save:
 - Greetings, small talk
 
 Rules:
-- Max 2 facts. If nothing qualifies → should_write:false, facts:[]
-- When in doubt → should_write:false
+- Decide yourself how many facts to save based on how much valuable info is in the conversation. Rich context → more facts, small talk → none.
+- If nothing qualifies → should_write:false, facts:[]
+- When in doubt about a specific fact → skip it, but don't skip others
 - Each fact: text (short atomic sentence), category (О компании|Финансы|Команда|Рынок|Другое), subcategory (1-3 words: Продукты/Клиенты/Команда/Маркетинг/Операции/Риски/Юнит-экономика/Процессы/Личное/Общее), confidence 0..1
+- Only skip facts with confidence < 0.6
 - reason: one short sentence (for logs)`;
 
 const DEFAULT_CONFIG: LLMConfig = {
@@ -333,7 +335,7 @@ export function useChatStore() {
       if (!result.should_write || !result.facts?.length) return;
 
       const newFacts: Fact[] = [];
-      for (const item of result.facts.slice(0, 2)) {
+      for (const item of result.facts) {
         if (!item.text || item.confidence < 0.6) continue;
         try {
           const saved = await api.facts.create(item.text, item.category || "Другое", "memory_gate" as "manual");
