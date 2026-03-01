@@ -97,8 +97,11 @@ export default function ChatPanel({
 
     const last = messages[messages.length - 1];
     if (last?.role === "assistant" && !last.content.startsWith("⚠️") && !last.content.startsWith("Ошибка")) {
+      // Озвучиваем только первые 2 предложения — быстрее генерация TTS
+      const sentences = last.content.match(/[^.!?]+[.!?]+/g) || [last.content];
+      const shortText = sentences.slice(0, 2).join(" ").trim() || last.content.slice(0, 200);
       setSpeakingId(last.id);
-      speak(last.content).finally(() => setSpeakingId(null));
+      speak(shortText).finally(() => setSpeakingId(null));
     }
   }, [messages, autoSpeak, apiKey, baseUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 

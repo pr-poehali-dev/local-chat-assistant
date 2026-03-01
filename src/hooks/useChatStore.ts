@@ -72,41 +72,33 @@ Rules:
 - If nothing to improve → return {"operations":[], "summary":"All facts look good"}`;
 
 const MEMORY_GATE_SYSTEM = `You are a knowledge base builder for a personal AI assistant.
-The PURPOSE of this memory is not curiosity — it is to build a reliable, structured knowledge base so the assistant can give accurate, personalised help in the future.
-
-The user's name may appear in conversation. NEVER write "пользователь" in fact text — always use the actual name (e.g. "Андрей"), or their role if name is unknown.
-
-Return ONLY valid JSON (no markdown):
+Extract facts from the conversation and return ONLY valid JSON (no markdown):
 {"should_write":false,"reason":"...","facts":[]}
+
+Each fact object MUST use this exact structure:
+{"text":"...","category":"...","subcategory":"...","confidence":0.9}
+
+CRITICAL: the field name is "text" (NOT "fact", NOT "content", NOT "value").
 
 SAVE facts that are:
 - Identity: full name, surname, age, location, family, background
 - Business info: product, sales channels, clients, team, history, values, goals
-- Personal projects separate from main business — describe clearly, note they are separate
+- Personal projects separate from main business
 - Stable preferences, work style, recurring patterns
 - Explicit decisions, plans, challenges
 
 DO NOT save:
 - Small talk with zero informational value
-- The assistant's own suggestions, advice or questions
+- Assistant's own suggestions or questions
 - Exact duplicates of EXISTING FACTS
 
 Rules:
-- Use the person's actual name in fact text, NEVER "пользователь"
-- Each fact must be SELF-CONTAINED — someone reading without context must understand it fully
-- Decompose stories into separate atomic facts (one fact = one sentence)
-- Choose category freely — pick the most meaningful Russian name:
-  * Personal identity (name, surname, age, family, location) → "Личное"
-  * Personal projects not related to main business → "Личные проекты"
-  * Main business → use the business name or "Бизнес"
-  * Finances → "Финансы"
-  * Team → "Команда"
-  * Market/clients/competitors → "Рынок"
-  * You MAY create new category names if none fit — be specific, not generic
-  * Avoid "Другое" unless truly uncategorizable
-- subcategory: 1-3 descriptive words (e.g. "Имя и фамилия", "История бизнеса", "Миссия")
-- confidence 0..1 — skip if < 0.6
-- reason: one short sentence for logs`;
+- NEVER write "пользователь" — use actual name (e.g. "Андрей") or "владелец"
+- Each fact must be SELF-CONTAINED — readable without context
+- One fact = one sentence
+- Categories (Russian): "Личное", "Личные проекты", "О компании", "Финансы", "Команда", "Рынок"
+- subcategory: 1-3 words (e.g. "Семья", "Возраст", "Локация")
+- confidence 0..1 — skip if < 0.6`;
 
 const DEFAULT_CONFIG: LLMConfig = {
   baseUrl: "https://api.openai.com/v1",
@@ -458,13 +450,14 @@ Rules:
 
       const newFacts: Fact[] = [];
       for (const item of result.facts) {
-        console.log(`[GATE] item: conf=${item.confidence} cat=${item.category} text=${item.text?.slice(0,50)}`);
-        if (!item.text || item.confidence < 0.6) {
-          console.log(`[GATE] skip: text=${!!item.text} conf=${item.confidence}`);
+        const itemText = item.text || item.fact || item.content || "";
+        console.log(`[GATE] item: conf=${item.confidence} cat=${item.category} text=${itemText.slice(0,50)}`);
+        if (!itemText || item.confidence < 0.6) {
+          console.log(`[GATE] skip: text=${!!itemText} conf=${item.confidence}`);
           continue;
         }
         try {
-          const saved = await api.facts.create(item.text, item.category || "Личное", "memory_gate" as "manual", item.subcategory || undefined);
+          const saved = await api.facts.create(itemText, item.category || "Личное", "memory_gate" as "manual", item.subcategory || undefined);
           newFacts.push(apiFactToFact(saved));
           console.log(`[GATE] +fact [${item.category}/${item.subcategory}]: ${item.text}`);
         } catch (e) {
