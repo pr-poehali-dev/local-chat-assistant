@@ -219,7 +219,7 @@ def sessions_create(body: dict) -> dict:
     sid = str(uuid.uuid4())
     ts = now_iso()
     title = body.get("title", "Новый диалог")
-    welcome = "Готов к работе. Задайте вопрос по анализу данных или деловому решению."
+    welcome = "Привет! Давайте познакомимся, чтобы я мог лучше вам помогать. Как вас зовут?"
     con = get_db()
     try:
         with con.cursor() as cur:
