@@ -36,6 +36,7 @@ export default function Index() {
     loading,
     appError,
     isThinking,
+    lastSavedCount,
     createSession,
     selectSession,
     sendMessage,
@@ -104,6 +105,14 @@ export default function Index() {
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
+      {lastSavedCount > 0 && (
+        <div className="fixed bottom-6 right-6 z-50 animate-fade-in">
+          <div className="flex items-center gap-2.5 bg-foreground text-background px-4 py-2.5 text-sm font-mono shadow-lg">
+            <Icon name="BookMarked" size={14} />
+            Запомнил {lastSavedCount} {lastSavedCount === 1 ? "факт" : lastSavedCount < 5 ? "факта" : "фактов"}
+          </div>
+        </div>
+      )}
       <aside
         className={`flex-shrink-0 border-r border-border flex flex-col transition-all duration-200 ${
           sidebarOpen ? "w-64" : "w-14"

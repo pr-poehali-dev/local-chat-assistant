@@ -63,30 +63,29 @@ Rules:
 - If nothing to improve → return {"operations":[], "summary":"All facts look good"}
 - Available categories: О компании, Финансы, Команда, Рынок, Другое`;
 
-const MEMORY_GATE_SYSTEM = `You are a memory gate for a personal AI assistant.
-Decide whether this conversation reveals facts worth storing long-term.
+const MEMORY_GATE_SYSTEM = `You are a memory extractor for a personal AI assistant.
+Your job: extract ALL valuable long-term facts from the conversation, regardless of what's already stored.
 Return ONLY valid JSON (no markdown):
 {"should_write":false,"reason":"...","facts":[]}
 
-SAVE facts that are:
-- Stable preferences (work style, likes/dislikes)
-- Permanent business parameters (team size, metrics, product, customer segment)
+ALWAYS SAVE facts that are:
+- Personal context (name, location, role, background story, how they started)
+- Business info (company name, product, market, customers, team size, revenue, history)
+- Stable preferences (work style, likes/dislikes, values)
 - Explicit decisions/policies ("we always do X")
-- Personal context (name, location, role, projects, goals)
+- Goals, challenges, plans
 
 DO NOT save:
-- One-time actions ("today I did...")
-- Draft thoughts or hypotheticals
-- Anything already in EXISTING FACTS
-- Assistant suggestions or questions
-- Greetings, small talk
+- Pure small talk or greetings with zero information
+- Assistant's own suggestions or questions
+- Exact duplicates of EXISTING FACTS (same meaning, same wording)
 
 Rules:
-- Decide yourself how many facts to save based on how much valuable info is in the conversation. Rich context → more facts, small talk → none.
-- If nothing qualifies → should_write:false, facts:[]
-- When in doubt about a specific fact → skip it, but don't skip others
-- Each fact: text (short atomic sentence), category (О компании|Финансы|Команда|Рынок|Другое), subcategory (1-3 words: Продукты/Клиенты/Команда/Маркетинг/Операции/Риски/Юнит-экономика/Процессы/Личное/Общее), confidence 0..1
-- Only skip facts with confidence < 0.6
+- Extract as many facts as the conversation contains — no artificial limit
+- If the user tells a story → decompose it into separate atomic facts
+- EXISTING FACTS are shown only to avoid exact duplicates. DO NOT use them to block new or complementary facts on the same topic.
+- Each fact: text (short atomic sentence in Russian), category (О компании|Финансы|Команда|Рынок|Другое), subcategory (1-3 words), confidence 0..1
+- Skip only facts with confidence < 0.6
 - reason: one short sentence (for logs)`;
 
 const DEFAULT_CONFIG: LLMConfig = {
@@ -156,6 +155,7 @@ export function useChatStore() {
   const [isThinking, setIsThinking] = useState(false);
   const [loading, setLoading] = useState(true);
   const [appError, setAppError] = useState<string | null>(null);
+  const [lastSavedCount, setLastSavedCount] = useState(0);
 
   const loadSessionMessages = useCallback(async (sessionId: string) => {
     try {
@@ -311,7 +311,7 @@ export function useChatStore() {
         body: JSON.stringify({
           model: config.model,
           temperature: 0.0,
-          max_tokens: 512,
+          max_tokens: 1024,
           messages: [
             { role: "system", content: MEMORY_GATE_SYSTEM },
             { role: "user", content: userContent },
@@ -348,6 +348,8 @@ export function useChatStore() {
 
       if (newFacts.length > 0) {
         setFacts((prev) => [...newFacts, ...prev]);
+        setLastSavedCount(newFacts.length);
+        setTimeout(() => setLastSavedCount(0), 4000);
       }
     } catch (e) {
       console.warn("[GATE] failed", e);
@@ -590,6 +592,7 @@ export function useChatStore() {
     isThinking,
     loading,
     appError,
+    lastSavedCount,
     createSession,
     selectSession,
     sendMessage,
