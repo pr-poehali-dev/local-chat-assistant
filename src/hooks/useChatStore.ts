@@ -339,7 +339,7 @@ export function useChatStore() {
       for (const item of result.facts) {
         if (!item.text || item.confidence < 0.6) continue;
         try {
-          const saved = await api.facts.create(item.text, item.category || "Другое", "memory_gate" as "manual");
+          const saved = await api.facts.create(item.text, item.category || "Другое", "memory_gate" as "manual", item.subcategory || undefined);
           newFacts.push(apiFactToFact(saved));
           console.log(`[GATE] +fact [${item.category}/${item.subcategory}]: ${item.text}`);
         } catch (e) {

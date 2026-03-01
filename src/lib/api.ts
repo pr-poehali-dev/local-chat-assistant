@@ -113,10 +113,10 @@ export const api = {
       if (params?.limit) qs.limit = String(params.limit);
       return request<ApiFact[]>("facts", "list", { qs });
     },
-    create: (text: string, category: string, source: "manual" | "auto" = "manual") =>
+    create: (text: string, category: string, source: "manual" | "auto" = "manual", subcategory?: string) =>
       request<ApiFact>("facts", "create", {
         method: "POST",
-        body: JSON.stringify({ text, category, source }),
+        body: JSON.stringify({ text, category, source, subcategory }),
       }),
     delete: (id: string) =>
       request<{ deleted: string }>("facts", "delete", { method: "DELETE", id }),

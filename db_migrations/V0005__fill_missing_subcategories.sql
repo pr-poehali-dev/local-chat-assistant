@@ -1,0 +1,16 @@
+UPDATE facts SET subcategory = 'История' WHERE subcategory IS NULL AND text ILIKE '%2019%';
+UPDATE facts SET subcategory = 'История' WHERE subcategory IS NULL AND text ILIKE '%начал бизнес%';
+UPDATE facts SET subcategory = 'Миссия' WHERE subcategory IS NULL AND text ILIKE '%миссия%';
+UPDATE facts SET subcategory = 'Миссия' WHERE subcategory IS NULL AND text ILIKE '%редкие породы%';
+UPDATE facts SET subcategory = 'Ассортимент' WHERE subcategory IS NULL AND text ILIKE '%заготовки%';
+UPDATE facts SET subcategory = 'Ассортимент' WHERE subcategory IS NULL AND text ILIKE '%материал%' AND category = 'О компании';
+UPDATE facts SET subcategory = 'Ассортимент' WHERE subcategory IS NULL AND text ILIKE '%небольших объём%';
+UPDATE facts SET subcategory = 'Логистика' WHERE subcategory IS NULL AND text ILIKE '%отправк%';
+UPDATE facts SET subcategory = 'Логистика' WHERE subcategory IS NULL AND text ILIKE '%заказ%' AND text ILIKE '%интернет%';
+UPDATE facts SET subcategory = 'Логистика' WHERE subcategory IS NULL AND text ILIKE '%быстр%';
+UPDATE facts SET subcategory = 'Основное' WHERE subcategory IS NULL AND text ILIKE '%Joywood%';
+UPDATE facts SET subcategory = 'Основное' WHERE subcategory IS NULL AND text ILIKE '%семейн%';
+UPDATE facts SET subcategory = 'Личное' WHERE subcategory IS NULL AND (text ILIKE '%Андрей%' OR text ILIKE '%Самара%') AND category = 'Другое';
+UPDATE facts SET subcategory = 'Клиенты' WHERE subcategory IS NULL AND category = 'Рынок';
+UPDATE facts SET subcategory = 'Стратегия' WHERE subcategory IS NULL AND text ILIKE '%развив%';
+UPDATE facts SET subcategory = 'Общее' WHERE subcategory IS NULL;
