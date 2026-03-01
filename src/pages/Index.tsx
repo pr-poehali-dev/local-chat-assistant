@@ -227,7 +227,9 @@ export default function Index() {
                     style={{ animationDelay: `${i * 0.05}s` }}
                   >
                     <p className="text-xs leading-relaxed">{f.content}</p>
-                    <span className="text-[10px] font-mono text-muted-foreground mt-1.5 block">{f.category}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground mt-1.5 block">
+                      {f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}
+                    </span>
                   </div>
                 ))}
                 {facts.length > 4 && (

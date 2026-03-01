@@ -113,10 +113,15 @@ export default function FactsPanel({ facts, onAdd, onDelete }: FactsPanelProps) 
                 <Icon name="Trash2" size={14} />
               </button>
             </div>
-            <div className="flex items-center gap-3 mt-3">
+            <div className="flex items-center gap-2 mt-3 flex-wrap">
               <span className="text-[11px] font-mono px-2 py-0.5 bg-secondary text-secondary-foreground">
                 {fact.category}
               </span>
+              {fact.subcategory && (
+                <span className="text-[11px] font-mono px-2 py-0.5 border border-border text-muted-foreground">
+                  {fact.subcategory}
+                </span>
+              )}
               <span className={`text-[11px] font-mono flex items-center gap-1 ${fact.source === "auto" ? "text-blue-500" : "text-muted-foreground"}`}>
                 <Icon name={fact.source === "auto" ? "Sparkles" : "User"} size={10} />
                 {fact.source === "auto" ? "авто" : "вручную"}

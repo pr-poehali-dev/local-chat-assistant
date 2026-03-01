@@ -21,6 +21,7 @@ export interface Fact {
   id: string;
   content: string;
   category: string;
+  subcategory?: string;
   addedAt: string;
   source: "manual" | "auto";
 }
@@ -73,6 +74,7 @@ function apiFactToFact(f: ApiFact): Fact {
     id: f.id,
     content: f.text,
     category: f.category,
+    subcategory: f.subcategory ?? undefined,
     addedAt: new Date(f.created_at).toLocaleDateString("ru-RU", { day: "numeric", month: "short" }),
     source: f.source,
   };
@@ -221,6 +223,7 @@ export function useChatStore() {
                 id: f.id,
                 content: f.text,
                 category: f.category,
+                subcategory: f.subcategory ?? undefined,
                 addedAt: "",
                 source: f.source,
               }));
@@ -232,7 +235,7 @@ export function useChatStore() {
           const factContext =
             relevantFacts.length > 0
               ? `\n\nПАМЯТЬ (релевантное):\n${relevantFacts
-                  .map((f) => `- [${f.category}] ${f.content}`)
+                  .map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.content}`)
                   .join("\n")}`
               : "";
 

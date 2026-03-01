@@ -41,11 +41,17 @@ VALID_CATEGORIES = {"О компании", "Финансы", "Команда", "
 EXTRACTOR_SYSTEM = (
     "You extract long-term user facts for a personal knowledge base. "
     "Return ONLY valid JSON in this exact schema, no markdown, no commentary:\n"
-    '{"facts":[{"text":"...","category":"profile|preferences|projects|constraints|other","confidence":0.0}]}\n'
-    "Rules: fact must be stable, user-specific, reusable later. "
-    "Do NOT extract ephemeral details (today, this chat), assistant suggestions, or greetings. "
-    "One fact = one short atomic sentence. Confidence 0..1."
+    '{"facts":[{"text":"...","category":"profile|preferences|projects|constraints|other","subcategory":"...","confidence":0.0}]}\n'
+    "Rules:\n"
+    "- fact must be stable, user-specific, reusable later.\n"
+    "- Do NOT extract ephemeral details (today, this chat), assistant suggestions, or greetings.\n"
+    "- One fact = one short atomic sentence. Confidence 0..1.\n"
+    "- subcategory: a short stable section name (1-3 words) such as: "
+    "'Продукты', 'Клиенты', 'Финансы', 'Команда', 'Маркетинг', 'Операции', 'Риски', 'Юнит-экономика', 'Процессы'. "
+    "If unsure — use 'Общее'."
 )
+
+SUBCATEGORY_LIMIT = 20
 
 
 def get_db():
@@ -281,6 +287,16 @@ def _normalize(text: str) -> str:
     return t.rstrip(".")
 
 
+def _normalize_subcategory(raw: str, existing_subcats: set) -> str:
+    if not raw:
+        return "Общее"
+    s = re.sub(r"\s+", " ", raw.strip())[:32]
+    s = s.title()
+    if s not in existing_subcats and len(existing_subcats) >= SUBCATEGORY_LIMIT:
+        return "Общее"
+    return s
+
+
 def _llm_call(base_url: str, api_key: str, model: str, messages: list) -> str:
     url = base_url.rstrip("/") + "/chat/completions"
     payload = json.dumps({
@@ -346,13 +362,16 @@ def _maybe_extract_facts(session_id: str, assistant_content: str) -> None:
             print(f"[WARN] extractor: invalid JSON: {raw[:200]}")
             return
 
-        # Существующие факты для дедупликации
+        # Существующие факты для дедупликации + текущие subcategory
         with con.cursor() as cur:
-            cur.execute("SELECT text, category FROM facts")
+            cur.execute("SELECT text, category, subcategory FROM facts")
             existing_rows = cur.fetchall()
         existing: dict[str, set] = {}
-        for t, c in existing_rows:
+        existing_subcats: set = set()
+        for t, c, sc in existing_rows:
             existing.setdefault(c, set()).add(_normalize(t))
+            if sc:
+                existing_subcats.add(sc)
 
         ts = now_iso()
         inserted = 0
@@ -362,6 +381,7 @@ def _maybe_extract_facts(session_id: str, assistant_content: str) -> None:
             text = (item.get("text") or "").strip()
             confidence = float(item.get("confidence", 0))
             raw_cat = (item.get("category") or "other").lower().strip()
+            raw_sub = (item.get("subcategory") or "").strip()
             if not text or confidence < 0.6:
                 continue
 
@@ -371,17 +391,19 @@ def _maybe_extract_facts(session_id: str, assistant_content: str) -> None:
                 print(f"[INFO] extractor: dup skip [{category}]: {text[:50]}")
                 continue
 
+            subcategory = _normalize_subcategory(raw_sub, existing_subcats)
             fid = str(uuid.uuid4())
             with con.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO facts (id, text, category, source, created_at, updated_at) "
-                    "VALUES (%s, %s, %s, %s, %s, %s)",
-                    (fid, text, category, "auto", ts, ts),
+                    "INSERT INTO facts (id, text, category, subcategory, source, created_at, updated_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (fid, text, category, subcategory, "auto", ts, ts),
                 )
             con.commit()
             existing.setdefault(category, set()).add(norm)
+            existing_subcats.add(subcategory)
             inserted += 1
-            print(f"[INFO] extractor: +fact [{category}]: {text[:60]}")
+            print(f"[INFO] extractor: +fact [{category}/{subcategory}]: {text[:60]}")
 
         print(f"[INFO] extractor: {inserted} new fact(s) for session {session_id[:8]}")
 
@@ -423,7 +445,7 @@ def facts_list(qs: dict) -> dict:
     try:
         with con.cursor() as cur:
             cur.execute(
-                f"SELECT id, text, category, source, created_at, updated_at "
+                f"SELECT id, text, category, subcategory, source, created_at, updated_at "
                 f"FROM facts {where} ORDER BY created_at DESC{limit_clause}",
                 params,
             )
@@ -461,13 +483,12 @@ def facts_relevant(qs: dict) -> dict:
             params = [f"%{w}%" for w in words]
             with con.cursor() as cur:
                 cur.execute(
-                    f"SELECT id, text, category, source, created_at FROM facts "
+                    f"SELECT id, text, category, subcategory, source, created_at FROM facts "
                     f"WHERE {conditions} ORDER BY created_at DESC LIMIT 50",
                     params,
                 )
                 rows = rows_to_list(cur)
 
-            # Ранжируем по количеству совпавших слов
             def score(row):
                 t = row["text"].lower()
                 return sum(1 for w in words if w in t)
@@ -476,10 +497,9 @@ def facts_relevant(qs: dict) -> dict:
             rows = rows[:limit]
 
         if not words or not rows:
-            # Fallback: последние N фактов
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, text, category, source, created_at FROM facts "
+                    "SELECT id, text, category, subcategory, source, created_at FROM facts "
                     "ORDER BY updated_at DESC LIMIT %s",
                     (limit,),
                 )
@@ -497,16 +517,20 @@ def facts_create(body: dict) -> dict:
         return err("text is required")
     category = body.get("category", "Другое")
     source = body.get("source", "manual")
+    raw_sub = (body.get("subcategory") or "").strip()
+    subcategory = re.sub(r"\s+", " ", raw_sub)[:32].title() if raw_sub else None
     fid, ts = str(uuid.uuid4()), now_iso()
     con = get_db()
     try:
         with con.cursor() as cur:
             cur.execute(
-                "INSERT INTO facts (id, text, category, source, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s)",
-                (fid, text, category, source, ts, ts),
+                "INSERT INTO facts (id, text, category, subcategory, source, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (fid, text, category, subcategory, source, ts, ts),
             )
         con.commit()
-        return ok({"id": fid, "text": text, "category": category, "source": source, "created_at": ts, "updated_at": ts}, 201)
+        return ok({"id": fid, "text": text, "category": category, "subcategory": subcategory,
+                   "source": source, "created_at": ts, "updated_at": ts}, 201)
     finally:
         con.close()
 

@@ -44,9 +44,10 @@ export interface ApiFact {
   id: string;
   text: string;
   category: string;
+  subcategory?: string | null;
   source: "manual" | "auto";
   created_at: string;
-  updated_at: string;
+  updated_at?: string;
 }
 
 export interface ApiSettings {
