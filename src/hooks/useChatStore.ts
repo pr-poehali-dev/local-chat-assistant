@@ -521,9 +521,9 @@ Rules:
           "⚠️ LLM не подключён. Откройте «Настройки», введите Base URL и API-ключ, нажмите «Сохранить».";
       } else {
         try {
-          // Если фактов мало (≤15) — берём все. Иначе — релевантные по запросу.
+          // Если фактов мало (≤50) — берём все. Иначе — релевантные по запросу.
           let relevantFacts = facts;
-          if (facts.length > 15) {
+          if (facts.length > 50) {
             try {
               const fetched = await api.facts.relevant(text, 10);
               if (fetched.length > 0) {
