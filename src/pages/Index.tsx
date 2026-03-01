@@ -48,6 +48,10 @@ export default function Index() {
     saveConfig,
     runConsolidation,
     runSummaries,
+    newFactIds,
+    clearNewFactIds,
+    updatedSummaryCategories,
+    clearUpdatedSummaries,
   } = store;
 
   const handleNewSession = () => {
@@ -299,7 +303,23 @@ export default function Index() {
             </header>
             <div className="flex-1 overflow-hidden">
               {activeTab === "facts" && (
-                <FactsPanel facts={facts} summaries={summaries} onAdd={addFact} onDelete={deleteFact} onClear={clearFacts} onProfileCommand={handleProfileCommand} onConsolidate={runConsolidation} onSummarize={runSummaries} />
+                <FactsPanel
+                  facts={facts}
+                  summaries={summaries}
+                  newFactIds={newFactIds}
+                  updatedSummaryCategories={updatedSummaryCategories}
+                  onAdd={addFact}
+                  onDelete={deleteFact}
+                  onClear={clearFacts}
+                  onProfileCommand={handleProfileCommand}
+                  onConsolidate={runConsolidation}
+                  onSummarize={runSummaries}
+                  onSendMessage={(text) => { sendMessage(text); setActiveTab("chat"); }}
+                  onMarkFactsSeen={clearNewFactIds}
+                  onMarkSummariesSeen={clearUpdatedSummaries}
+                  apiKey={config.apiKey}
+                  baseUrl={config.baseUrl}
+                />
               )}
               {activeTab === "settings" && (
                 <SettingsPanel config={config} onSave={saveConfig} />

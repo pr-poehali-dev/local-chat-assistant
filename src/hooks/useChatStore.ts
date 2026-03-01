@@ -190,6 +190,8 @@ export function useChatStore() {
   const [appError, setAppError] = useState<string | null>(null);
   const [lastSavedCount, setLastSavedCount] = useState(0);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
+  const [newFactIds, setNewFactIds] = useState<Set<string>>(new Set());
+  const [updatedSummaryCategories, setUpdatedSummaryCategories] = useState<Set<string>>(new Set());
 
   const loadSessionMessages = useCallback(async (sessionId: string) => {
     try {
@@ -391,6 +393,7 @@ Rules:
     }
 
     setSummaries((prev) => ({ ...prev, ...newSummaries }));
+    setUpdatedSummaryCategories(new Set(Object.keys(newSummaries)));
     return `Обновлено резюме для ${updated} ${updated === 1 ? "категории" : updated < 5 ? "категорий" : "категорий"}`;
   }, [config, facts]);
 
@@ -449,6 +452,7 @@ Rules:
         setFacts((prev) => [...newFacts, ...prev]);
         setLastSavedCount(newFacts.length);
         setTimeout(() => setLastSavedCount(0), 4000);
+        setNewFactIds((prev) => new Set([...prev, ...newFacts.map((f) => f.id)]));
       }
     } catch (e) {
       console.warn("[GATE] failed", e);
@@ -726,5 +730,9 @@ Rules:
     saveConfig,
     runConsolidation,
     runSummaries,
+    newFactIds,
+    clearNewFactIds: () => setNewFactIds(new Set()),
+    updatedSummaryCategories,
+    clearUpdatedSummaries: () => setUpdatedSummaryCategories(new Set()),
   };
 }
