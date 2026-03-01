@@ -57,8 +57,14 @@ Return ONLY valid JSON (no markdown):
 Rules:
 - Merge near-duplicate facts (same meaning, different wording) → keep best phrasing
 - Split overcrowded subcategories if needed, create new descriptive ones
-- Rename vague subcategories (null/"Общее") → give them proper names based on content
-- Correct wrong category assignments
+- Rename vague subcategories (null/"Общее"/"Ассортимент" used for non-product info) → give proper descriptive names based on content
+- ALWAYS fix wrong category and subcategory assignments — this is critical:
+  * Personal info (name, age, family, location, hobbies) → category "Другое", subcategory "Личное" or specific (e.g. "Семья", "Возраст")
+  * Owner/founder info → category "О компании", subcategory "Владелец" or "Основатель"
+  * Company history, founding story → subcategory "История"
+  * Products/goods → subcategory "Ассортимент" (ONLY for actual product descriptions)
+  * Mission, values → subcategory "Миссия"
+  * Contacts, address, website → subcategory "Контакты"
 - Delete facts that are clearly outdated, trivial or contradicted by better facts
 - Keep atomic facts (one fact = one sentence)
 - Preserve all IDs exactly as given
