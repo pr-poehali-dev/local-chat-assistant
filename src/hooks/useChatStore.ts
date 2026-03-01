@@ -36,6 +36,7 @@ export interface LLMConfig {
   autoExtract: boolean;
   antiDuplicates: boolean;
   topFacts: boolean;
+  autoSpeak: boolean;
 }
 
 const CONSOLIDATION_SYSTEM = `You are a memory curator for a personal AI assistant.
@@ -96,6 +97,7 @@ const DEFAULT_CONFIG: LLMConfig = {
   autoExtract: true,
   antiDuplicates: true,
   topFacts: true,
+  autoSpeak: false,
 };
 
 function apiMsgToMsg(m: ApiMessage): Message {
@@ -140,6 +142,7 @@ function apiSettingsToConfig(s: ApiSettings): LLMConfig {
     autoExtract: toggles.autoExtract,
     antiDuplicates: toggles.antiDuplicates,
     topFacts: toggles.topFacts,
+    autoSpeak: (toggles as Record<string, boolean>).autoSpeak ?? false,
   };
 }
 

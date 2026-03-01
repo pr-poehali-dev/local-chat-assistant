@@ -200,6 +200,7 @@ export default function Index() {
                   model={connected ? config.model : undefined}
                   apiKey={config.apiKey}
                   baseUrl={config.baseUrl}
+                  autoSpeak={config.autoSpeak}
                 />
               </div>
             </div>

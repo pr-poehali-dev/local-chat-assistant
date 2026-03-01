@@ -199,6 +199,24 @@ export default function SettingsPanel({ config, onSave }: SettingsPanelProps) {
           </div>
         </section>
 
+        <section>
+          <h3 className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest mb-3">
+            Голос
+          </h3>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!local.autoSpeak}
+              onChange={(e) => update("autoSpeak", e.target.checked)}
+              className="mt-0.5 accent-foreground"
+            />
+            <div>
+              <span className="text-sm font-medium block">Авто-озвучка</span>
+              <span className="text-xs text-muted-foreground">Каждый ответ ассистента будет автоматически озвучен (требует API с поддержкой TTS)</span>
+            </div>
+          </label>
+        </section>
+
         <button
           onClick={handleSave}
           className={`w-full py-3 text-sm font-medium transition-all ${
