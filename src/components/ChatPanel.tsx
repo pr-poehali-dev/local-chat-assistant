@@ -44,6 +44,8 @@ export default function ChatPanel({
     onTranscript: handleTranscript,
   });
 
+  const voiceAvailable = !!apiKey && !!baseUrl;
+
   const startRecording = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
     _startRecording();
@@ -136,7 +138,6 @@ export default function ChatPanel({
   const formatTime = (d: Date) =>
     new Date(d).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 
-  const voiceAvailable = !!apiKey && !!baseUrl;
   const isRecording = voiceState === "recording";
   const isProcessing = voiceState === "processing";
 
