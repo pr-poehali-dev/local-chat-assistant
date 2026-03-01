@@ -61,6 +61,7 @@ Rules:
 - ALWAYS fix wrong category and subcategory assignments — this is critical:
   * Personal info (name, age, family, location, hobbies) → category "Другое", subcategory "Личное" or specific (e.g. "Семья", "Возраст")
   * Owner/founder info → category "О компании", subcategory "Владелец" or "Основатель"
+  * Personal projects NOT related to Joywood (e.g. this AI assistant app) → category "Другое", subcategory "Личный проект"
   * Company history, founding story → subcategory "История"
   * Products/goods → subcategory "Ассортимент" (ONLY for actual product descriptions)
   * Mission, values → subcategory "Миссия"
@@ -81,7 +82,7 @@ ALWAYS SAVE facts that are:
 - Business info (company name, product, market, customers, team size, revenue, history)
 - Stable preferences (work style, likes/dislikes, values)
 - Explicit decisions/policies ("we always do X")
-- Goals, challenges, plans
+- Goals, challenges, plans, personal projects
 
 DO NOT save:
 - Pure small talk or greetings with zero information
@@ -92,8 +93,15 @@ Rules:
 - Extract as many facts as the conversation contains — no artificial limit
 - If the user tells a story → decompose it into separate atomic facts
 - EXISTING FACTS are shown only to avoid exact duplicates. DO NOT use them to block new or complementary facts on the same topic.
-- Each fact: text (short atomic sentence in Russian), category (О компании|Финансы|Команда|Рынок|Другое), subcategory (1-3 words), confidence 0..1
-- Skip only facts with confidence < 0.6
+- Each fact: text must be SPECIFIC and self-contained — include who/what/why so it makes sense without context. Never write vague sentences like "Пользователь создает приложение" — write "Андрей разрабатывает личное приложение персонального ИИ-ассистента с базой знаний (не связано с Joywood)"
+- Category rules (CRITICAL — do not confuse):
+  * "О компании" = ONLY facts about Joywood business (products, sales, clients, operations)
+  * "Другое" = personal info, personal projects, hobbies, life outside Joywood
+  * "Финансы" = revenue, costs, investments related to Joywood
+  * "Рынок" = market, competitors, customer segments of Joywood
+  * "Команда" = employees and partners of Joywood
+- subcategory: 1-3 words describing the specific aspect
+- confidence 0..1 — skip facts with confidence < 0.6
 - reason: one short sentence (for logs)`;
 
 const DEFAULT_CONFIG: LLMConfig = {
