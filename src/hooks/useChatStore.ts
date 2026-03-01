@@ -38,6 +38,30 @@ export interface LLMConfig {
   topFacts: boolean;
 }
 
+const MEMORY_GATE_SYSTEM = `You are a memory gate for a personal AI assistant.
+Decide whether this conversation reveals facts worth storing long-term.
+Return ONLY valid JSON (no markdown):
+{"should_write":false,"reason":"...","facts":[]}
+
+SAVE facts that are:
+- Stable preferences (work style, likes/dislikes)
+- Permanent business parameters (team size, metrics, product, customer segment)
+- Explicit decisions/policies ("we always do X")
+- Personal context (name, location, role, projects, goals)
+
+DO NOT save:
+- One-time actions ("today I did...")
+- Draft thoughts or hypotheticals
+- Anything already in EXISTING FACTS
+- Assistant suggestions or questions
+- Greetings, small talk
+
+Rules:
+- Max 2 facts. If nothing qualifies → should_write:false, facts:[]
+- When in doubt → should_write:false
+- Each fact: text (short atomic sentence), category (О компании|Финансы|Команда|Рынок|Другое), subcategory (1-3 words: Продукты/Клиенты/Команда/Маркетинг/Операции/Риски/Юнит-экономика/Процессы/Личное/Общее), confidence 0..1
+- reason: one short sentence (for logs)`;
+
 const DEFAULT_CONFIG: LLMConfig = {
   baseUrl: "https://api.openai.com/v1",
   apiKey: "",
@@ -178,6 +202,64 @@ export function useChatStore() {
     },
     [sessions, loadSessionMessages]
   );
+
+  const runMemoryGate = useCallback(async (userMsg: string, assistantMsg: string, currentFacts: Fact[]) => {
+    if (!config.autoExtract || !config.apiKey || !config.baseUrl) return;
+    try {
+      const existingSample = currentFacts.slice(0, 8)
+        .map((f) => `- [${f.category}] ${f.content}`)
+        .join("\n") || "none";
+
+      const userContent = `USER: ${userMsg}\n\nASSISTANT: ${assistantMsg}\n\nEXISTING FACTS (do not duplicate):\n${existingSample}`;
+
+      const res = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
+        body: JSON.stringify({
+          model: config.model,
+          temperature: 0.0,
+          max_tokens: 512,
+          messages: [
+            { role: "system", content: MEMORY_GATE_SYSTEM },
+            { role: "user", content: userContent },
+          ],
+        }),
+      });
+
+      if (!res.ok) return;
+      const data = await res.json();
+      const raw: string = data?.choices?.[0]?.message?.content ?? "";
+
+      let result: { should_write: boolean; facts?: Array<{ text: string; category: string; subcategory?: string; confidence: number }> };
+      try {
+        const match = raw.match(/\{[\s\S]*\}/);
+        result = JSON.parse(match ? match[0] : raw);
+      } catch {
+        return;
+      }
+
+      console.log("[GATE]", result.should_write, (result as { reason?: string }).reason ?? "");
+      if (!result.should_write || !result.facts?.length) return;
+
+      const newFacts: Fact[] = [];
+      for (const item of result.facts.slice(0, 2)) {
+        if (!item.text || item.confidence < 0.6) continue;
+        try {
+          const saved = await api.facts.create(item.text, item.category || "Другое", "memory_gate" as "manual");
+          newFacts.push(apiFactToFact(saved));
+          console.log(`[GATE] +fact [${item.category}/${item.subcategory}]: ${item.text}`);
+        } catch (e) {
+          console.warn("[GATE] save error", e);
+        }
+      }
+
+      if (newFacts.length > 0) {
+        setFacts((prev) => [...newFacts, ...prev]);
+      }
+    } catch (e) {
+      console.warn("[GATE] failed", e);
+    }
+  }, [config]);
 
   const isProfileCommand = (t: string): boolean => {
     const q = t.toLowerCase().trim();
@@ -356,15 +438,12 @@ export function useChatStore() {
       );
       setIsThinking(false);
 
-      // Live-обновление фактов: бэкенд мог извлечь новые после ответа
-      try {
-        const freshFacts = await api.facts.list();
-        setFacts(freshFacts.map(apiFactToFact));
-      } catch (e) {
-        console.warn("refresh facts", e);
+      // Memory Gate — фоново, не блокирует UI
+      if (assistantContent && !assistantContent.startsWith("⚠️") && !assistantContent.startsWith("Ошибка")) {
+        runMemoryGate(text, assistantContent, facts);
       }
     },
-    [activeSessionId, activeSession, config, facts, isThinking]
+    [activeSessionId, activeSession, config, facts, isThinking, runMemoryGate]
   );
 
   const addFact = useCallback(async (content: string, category: string) => {

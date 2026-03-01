@@ -282,26 +282,7 @@ def messages_create(session_id: str, body: dict) -> dict:
                 )
         con.commit()
 
-        # Memory gate после ответа ассистента
-        if role == "assistant":
-            try:
-                # Берём последнее user-сообщение из БД
-                gate_con = get_db()
-                try:
-                    with gate_con.cursor() as cur:
-                        cur.execute(
-                            "SELECT content FROM messages WHERE session_id = %s AND role = 'user' "
-                            "ORDER BY created_at DESC LIMIT 1",
-                            (session_id,),
-                        )
-                        row = cur.fetchone()
-                    gate_con.commit()
-                finally:
-                    gate_con.close()
-                user_msg = row[0] if row else ""
-                _memory_gate(session_id, user_msg, content)
-            except Exception as ex:
-                print(f"[GATE] failed silently: {ex}")
+        # Memory gate перенесён на фронтенд (бэкенд заблокирован по гео OpenAI)
 
         return ok({"id": mid, "session_id": session_id, "role": role, "content": content, "created_at": ts}, 201)
     finally:
