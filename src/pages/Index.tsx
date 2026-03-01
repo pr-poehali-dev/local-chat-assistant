@@ -198,6 +198,8 @@ export default function Index() {
                   onSend={sendMessage}
                   sessionId={activeSessionId}
                   model={connected ? config.model : undefined}
+                  apiKey={config.apiKey}
+                  baseUrl={config.baseUrl}
                 />
               </div>
             </div>
