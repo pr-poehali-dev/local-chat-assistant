@@ -149,6 +149,11 @@ export default function ChatPanel({
 
   const VISIBLE = 10;
   const [showAll, setShowAll] = useState(false);
+  const prevSessionId = useRef(sessionId);
+  if (prevSessionId.current !== sessionId) {
+    prevSessionId.current = sessionId;
+    setShowAll(false);
+  }
   const hiddenCount = messages.length > VISIBLE ? messages.length - VISIBLE : 0;
   const visibleMessages = showAll || hiddenCount === 0 ? messages : messages.slice(-VISIBLE);
 

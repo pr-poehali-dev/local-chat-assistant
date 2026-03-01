@@ -1,8 +1,6 @@
 import { useState } from "react";
 import Icon from "@/components/ui/icon";
 
-const DEFAULT_CATEGORIES = ["О компании", "Финансы", "Команда", "Рынок", "Другое", "Личное", "Личные проекты"];
-
 interface FactsPanelHeaderProps {
   factsCount: number;
   newFactsCount: number;
@@ -33,18 +31,18 @@ export default function FactsPanelHeader({
   existingCategories,
 }: FactsPanelHeaderProps) {
   const [newFact, setNewFact] = useState("");
-  const [newCategory, setNewCategory] = useState("О компании");
+  const [newCategory, setNewCategory] = useState("");
   const [isAdding, setIsAdding] = useState(false);
 
   const handleAdd = () => {
     const text = newFact.trim();
+    const cat = newCategory.trim() || "Личное";
     if (!text) return;
-    onAdd(text, newCategory);
+    onAdd(text, cat);
     setNewFact("");
+    setNewCategory("");
     setIsAdding(false);
   };
-
-  const categoryOptions = Array.from(new Set([...DEFAULT_CATEGORIES, ...existingCategories]));
 
   return (
     <div className="px-6 py-4 border-b border-border">
@@ -120,13 +118,18 @@ export default function FactsPanelHeader({
 
       {isAdding && (
         <div className="mt-3 space-y-2 animate-slide-up border border-border p-3">
-          <select
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            className="w-full text-xs border border-border bg-card px-3 py-2 focus:outline-none focus:border-foreground font-mono"
-          >
-            {categoryOptions.map((c) => <option key={c}>{c}</option>)}
-          </select>
+          <div className="relative">
+            <input
+              list="category-suggestions"
+              value={newCategory}
+              onChange={(e) => setNewCategory(e.target.value)}
+              placeholder="Категория (например: Личное, Здоровье, Хобби...)"
+              className="w-full text-xs border border-border bg-card px-3 py-2 focus:outline-none focus:border-foreground font-mono placeholder:text-muted-foreground"
+            />
+            <datalist id="category-suggestions">
+              {existingCategories.map((c) => <option key={c} value={c} />)}
+            </datalist>
+          </div>
           <textarea
             value={newFact}
             onChange={(e) => setNewFact(e.target.value)}

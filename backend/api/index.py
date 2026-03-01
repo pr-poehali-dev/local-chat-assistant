@@ -69,7 +69,7 @@ MEMORY_GATE_SYSTEM = (
     "- reason: one short sentence for logs"
 )
 
-SUBCATEGORY_LIMIT = 20
+SUBCATEGORY_LIMIT = 999
 
 # Категории → ключевые слова для маршрутизации
 CATEGORY_HINTS = {
