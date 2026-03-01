@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { api } from "@/lib/api";
-import type { ApiSession, ApiMessage, ApiFact, ApiSettings } from "@/lib/api";
+import type { ApiSession, ApiMessage, ApiFact, ApiSettings, ApiProfile } from "@/lib/api";
 
 export interface Message {
   id: string;
@@ -179,6 +179,29 @@ export function useChatStore() {
     [sessions, loadSessionMessages]
   );
 
+  const isProfileCommand = (t: string): boolean => {
+    const q = t.toLowerCase().trim();
+    return /\bмой\s+профиль\b|\bпрофиль\b|\bсводка\s+фактов\b|\bмоя\s+память\b|\bпокажи\s+память\b/.test(q);
+  };
+
+  const formatProfile = (data: ApiProfile): string => {
+    const { profile, stats } = data;
+    if (stats.facts_total === 0) {
+      return "База знаний пока пуста. Поговорите со мной — я начну запоминать важные детали.";
+    }
+    const lines: string[] = [`**Профиль (по памяти)** · ${stats.facts_total} фактов · ${stats.categories} категорий`];
+    for (const cat of profile) {
+      lines.push(`\n### ${cat.category}`);
+      for (const sec of cat.sections) {
+        lines.push(`**${sec.subcategory}**`);
+        for (const item of sec.items) {
+          lines.push(`• ${item.text}`);
+        }
+      }
+    }
+    return lines.join("\n");
+  };
+
   const sendMessage = useCallback(
     async (text: string) => {
       if (!text.trim() || isThinking || !activeSessionId) return;
@@ -208,6 +231,31 @@ export function useChatStore() {
       }
 
       let assistantContent = "";
+
+      // ── Команда "профиль" — без LLM ──
+      if (isProfileCommand(text)) {
+        try {
+          const profileData = await api.facts.profile(5);
+          assistantContent = formatProfile(profileData);
+        } catch {
+          assistantContent = "Не удалось загрузить профиль. Попробуйте позже.";
+        }
+
+        const savedMsg = await api.messages.create(activeSessionId, "assistant", assistantContent).catch(() => null);
+        const assistantMsg: Message = savedMsg
+          ? { id: savedMsg.id, role: "assistant", content: assistantContent, timestamp: new Date(savedMsg.created_at) }
+          : { id: `resp-${Date.now()}`, role: "assistant", content: assistantContent, timestamp: new Date() };
+
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === activeSessionId
+              ? { ...s, messages: [...s.messages.filter((m) => m.id !== tempId), assistantMsg] }
+              : s
+          )
+        );
+        setIsThinking(false);
+        return;
+      }
 
       if (!config.apiKey || !config.baseUrl) {
         await new Promise((r) => setTimeout(r, 800));

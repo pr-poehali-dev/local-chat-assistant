@@ -153,6 +153,8 @@ def route(event: dict) -> dict:
             return facts_list(qs)
         if a == "relevant":
             return facts_relevant(qs)
+        if a == "profile":
+            return facts_profile(qs)
         if a == "create" or (not a and method == "POST"):
             return facts_create(body)
         if a == "delete" or (not a and method == "DELETE"):
@@ -542,6 +544,47 @@ def facts_relevant(qs: dict) -> dict:
         return ok(rows)
     finally:
         con.close()
+
+
+def facts_profile(qs: dict) -> dict:
+    raw_limit = qs.get("limit_per_section", "5")
+    limit_per_section = int(raw_limit) if raw_limit.isdigit() else 5
+
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "SELECT category, subcategory, text, updated_at "
+                "FROM facts ORDER BY category ASC, subcategory ASC NULLS LAST, updated_at DESC"
+            )
+            rows = cur.fetchall()
+        con.commit()
+    finally:
+        con.close()
+
+    # Группируем в Python
+    from collections import defaultdict
+    grouped: dict = defaultdict(lambda: defaultdict(list))
+    for cat, sub, text, upd in rows:
+        sub_key = sub if sub else "Общее"
+        grouped[cat][sub_key].append({"text": text, "updated_at": str(upd) if upd else ""})
+
+    profile = []
+    for cat in sorted(grouped.keys()):
+        sections = []
+        for sub_key in sorted(grouped[cat].keys()):
+            items = grouped[cat][sub_key][:limit_per_section]
+            sections.append({"subcategory": sub_key, "items": items})
+        profile.append({"category": cat, "sections": sections})
+
+    all_subcats = {(cat, sub) for cat, sub, *_ in rows if sub}
+    stats = {
+        "facts_total": len(rows),
+        "categories": len(grouped),
+        "subcategories": len(all_subcats),
+    }
+
+    return ok({"profile": profile, "stats": stats})
 
 
 def facts_create(body: dict) -> dict:

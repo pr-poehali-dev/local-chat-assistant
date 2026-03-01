@@ -50,6 +50,23 @@ export interface ApiFact {
   updated_at?: string;
 }
 
+export interface ApiProfileItem {
+  text: string;
+  updated_at: string;
+}
+export interface ApiProfileSection {
+  subcategory: string;
+  items: ApiProfileItem[];
+}
+export interface ApiProfileCategory {
+  category: string;
+  sections: ApiProfileSection[];
+}
+export interface ApiProfile {
+  profile: ApiProfileCategory[];
+  stats: { facts_total: number; categories: number; subcategories: number };
+}
+
 export interface ApiSettings {
   id: number;
   base_url: string;
@@ -105,6 +122,8 @@ export const api = {
       request<{ deleted: string }>("facts", "delete", { method: "DELETE", id }),
     relevant: (q: string, limit = 8) =>
       request<ApiFact[]>("facts", "relevant", { qs: { q, limit: String(limit) } }),
+    profile: (limitPerSection = 5) =>
+      request<ApiProfile>("facts", "profile", { qs: { limit_per_section: String(limitPerSection) } }),
   },
 
   settings: {

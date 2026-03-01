@@ -8,9 +8,10 @@ interface FactsPanelProps {
   facts: Fact[];
   onAdd: (content: string, category: string) => void;
   onDelete: (id: string) => void;
+  onProfileCommand?: () => void;
 }
 
-export default function FactsPanel({ facts, onAdd, onDelete }: FactsPanelProps) {
+export default function FactsPanel({ facts, onAdd, onDelete, onProfileCommand }: FactsPanelProps) {
   const [newFact, setNewFact] = useState("");
   const [newCategory, setNewCategory] = useState("О компании");
   const [filter, setFilter] = useState("Все");
@@ -36,15 +37,27 @@ export default function FactsPanel({ facts, onAdd, onDelete }: FactsPanelProps) 
               {facts.length} фактов · подмешиваются в контекст
             </p>
           </div>
-          <button
-            onClick={() => setIsAdding(!isAdding)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
-              isAdding ? "bg-foreground text-background" : "border border-border hover:bg-secondary"
-            }`}
-          >
-            <Icon name={isAdding ? "X" : "Plus"} size={13} />
-            {isAdding ? "Отмена" : "Добавить факт"}
-          </button>
+          <div className="flex items-center gap-2">
+            {onProfileCommand && (
+              <button
+                onClick={onProfileCommand}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border hover:bg-secondary transition-colors"
+                title="Показать сводку по памяти в чате"
+              >
+                <Icon name="User" size={13} />
+                Профиль
+              </button>
+            )}
+            <button
+              onClick={() => setIsAdding(!isAdding)}
+              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
+                isAdding ? "bg-foreground text-background" : "border border-border hover:bg-secondary"
+              }`}
+            >
+              <Icon name={isAdding ? "X" : "Plus"} size={13} />
+              {isAdding ? "Отмена" : "Добавить факт"}
+            </button>
+          </div>
         </div>
 
         {isAdding && (

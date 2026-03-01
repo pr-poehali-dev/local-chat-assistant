@@ -54,6 +54,11 @@ export default function Index() {
     setActiveTab("chat");
   };
 
+  const handleProfileCommand = () => {
+    setActiveTab("chat");
+    sendMessage("покажи мой профиль");
+  };
+
   const connected = !!config.apiKey && !!config.baseUrl;
   const contextFacts = facts.slice(0, 4);
 
@@ -263,7 +268,7 @@ export default function Index() {
             </header>
             <div className="flex-1 overflow-hidden">
               {activeTab === "facts" && (
-                <FactsPanel facts={facts} onAdd={addFact} onDelete={deleteFact} />
+                <FactsPanel facts={facts} onAdd={addFact} onDelete={deleteFact} onProfileCommand={handleProfileCommand} />
               )}
               {activeTab === "settings" && (
                 <SettingsPanel config={config} onSave={saveConfig} />
