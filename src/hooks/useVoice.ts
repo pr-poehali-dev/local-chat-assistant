@@ -162,7 +162,8 @@ async function transcribeAudio(blob: Blob, baseUrl: string, apiKey: string): Pro
   form.append("file", blob, "audio.webm");
   form.append("model", "whisper-1");
   form.append("language", "ru");
-  form.append("response_format", "text");
+  form.append("response_format", "json");
+  form.append("prompt", "Транскрибируй только речь. Игнорируй метаданные, технические подписи и заголовки файла.");
 
   const res = await fetch(`${openaiBase}/audio/transcriptions`, {
     method: "POST",
@@ -175,5 +176,6 @@ async function transcribeAudio(blob: Blob, baseUrl: string, apiKey: string): Pro
     throw new Error(err?.error?.message ?? `Whisper error ${res.status}`);
   }
 
-  return await res.text();
+  const data = await res.json();
+  return data.text ?? "";
 }
