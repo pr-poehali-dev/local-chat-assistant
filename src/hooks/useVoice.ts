@@ -57,7 +57,9 @@ export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript }: Us
         streamRef.current = null;
 
         const blob = new Blob(chunksRef.current, { type: mimeType });
+        console.log("[Voice] blob size:", blob.size, "chunks:", chunksRef.current.length, "mimeType:", mimeType);
         if (blob.size < 1000) {
+          console.log("[Voice] blob too small, skipping");
           setVoiceState("idle");
           return;
         }
@@ -65,10 +67,12 @@ export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript }: Us
         setVoiceState("processing");
         try {
           const transcript = await transcribeAudio(blob, baseUrl, apiKey);
+          console.log("[Voice] transcript result:", JSON.stringify(transcript));
           if (transcript.trim()) {
             onTranscript(transcript.trim());
           }
         } catch (e: unknown) {
+          console.log("[Voice] transcribe error:", e);
           setError(e instanceof Error ? e.message : "Ошибка распознавания");
         } finally {
           setVoiceState("idle");
