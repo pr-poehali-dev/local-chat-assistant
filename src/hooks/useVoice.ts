@@ -7,9 +7,10 @@ interface UseVoiceOptions {
   apiKey: string;
   speechRate?: number;
   onTranscript: (text: string) => void;
+  onHallucination?: (raw: string) => void;
 }
 
-export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript }: UseVoiceOptions) {
+export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript, onHallucination }: UseVoiceOptions) {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [error, setError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -68,7 +69,9 @@ export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript }: Us
         try {
           const transcript = await transcribeAudio(blob, baseUrl, apiKey);
           console.error("[Voice] transcript result:", JSON.stringify(transcript));
-          if (transcript.trim()) {
+          if (transcript === "__hallucination__") {
+            setError("Речь не распознана. Говорите чётче или ближе к микрофону.");
+          } else if (transcript.trim()) {
             onTranscript(transcript.trim());
           }
         } catch (e: unknown) {
@@ -167,7 +170,8 @@ async function transcribeAudio(blob: Blob, baseUrl: string, apiKey: string): Pro
   form.append("model", "whisper-1");
   form.append("language", "ru");
   form.append("response_format", "json");
-  form.append("prompt", "Транскрибируй только речь. Игнорируй метаданные, технические подписи и заголовки файла.");
+  form.append("temperature", "0");
+  form.append("prompt", "Андрей, привет. Расскажи мне.");
 
   const res = await fetch(`${openaiBase}/audio/transcriptions`, {
     method: "POST",
@@ -185,7 +189,7 @@ async function transcribeAudio(blob: Blob, baseUrl: string, apiKey: string): Pro
   console.error("[Whisper raw]", JSON.stringify(text));
   const isHallu = isWhisperHallucination(text);
   console.error("[Whisper hallucination?]", isHallu);
-  return isHallu ? "" : text;
+  return isHallu ? "__hallucination__" : text;
 }
 
 // Известные галлюцинации Whisper на тишине / коротком аудио
