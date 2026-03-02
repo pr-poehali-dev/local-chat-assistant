@@ -255,6 +255,10 @@ export function useChatStore() {
   const [isThinking, setIsThinking] = useState(false);
   const [loading, setLoading] = useState(true);
   const [appError, setAppError] = useState<string | null>(null);
+  const factsSinceConsolidationRef = React.useRef(0);
+  const AUTO_CONSOLIDATE_THRESHOLD = 20;
+  const runPortraitRef = React.useRef<(() => Promise<string>) | null>(null);
+  const runConsolidationRef = React.useRef<(() => Promise<string>) | null>(null);
   const [lastSavedCount, setLastSavedCount] = useState(0);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [newFactIds, setNewFactIds] = useState<Set<string>>(new Set());
@@ -421,6 +425,16 @@ export function useChatStore() {
     const freshFacts = await api.facts.list();
     setFacts(freshFacts.map(apiFactToFact));
 
+    // Сбрасываем счётчик автоконсолидации
+    factsSinceConsolidationRef.current = 0;
+
+    // Автоматически обновляем портрет после консолидации
+    try {
+      if (runPortraitRef.current) await runPortraitRef.current();
+    } catch (e) {
+      console.warn("[CONSOLIDATION] portrait update failed", e);
+    }
+
     return `${result.summary} (операций: ${applied})`;
   }, [config, facts]);
 
@@ -525,6 +539,10 @@ Rules:
     return text;
   }, [config, facts, summaries]);
 
+  // Регистрируем refs — для forward-ссылок между функциями
+  runPortraitRef.current = runPortrait;
+  runConsolidationRef.current = runConsolidation;
+
   const runMemoryGate = useCallback(async (batch: Array<{ user: string; assistant: string }>, currentFacts: Fact[], cfg = config) => {
     console.log("[GATE] start batch", { count: batch.length, autoExtract: cfg.autoExtract, hasKey: !!cfg.apiKey, hasUrl: !!cfg.baseUrl });
     if (!cfg.autoExtract || !cfg.apiKey || !cfg.baseUrl || batch.length === 0) return;
@@ -584,6 +602,16 @@ Rules:
         setLastSavedCount(newFacts.length);
         setTimeout(() => setLastSavedCount(0), 4000);
         setNewFactIds((prev) => new Set([...prev, ...newFacts.map((f) => f.id)]));
+
+        // Автоконсолидация: накопилось достаточно новых фактов
+        factsSinceConsolidationRef.current += newFacts.length;
+        if (factsSinceConsolidationRef.current >= AUTO_CONSOLIDATE_THRESHOLD) {
+          console.log(`[GATE] auto-consolidation triggered (${factsSinceConsolidationRef.current} new facts)`);
+          // Запускаем фоново — не блокируем
+          setTimeout(() => {
+            runConsolidationRef.current?.().catch((e) => console.warn("[AUTO-CONSOLIDATION] failed", e));
+          }, 2000);
+        }
       }
     } catch (e) {
       console.warn("[GATE] failed", e);
