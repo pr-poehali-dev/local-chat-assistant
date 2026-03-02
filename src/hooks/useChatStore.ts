@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { api } from "@/lib/api";
-import type { ApiSession, ApiMessage, ApiFact, ApiSettings, ApiProfile } from "@/lib/api";
+import type { ApiSession, ApiMessage, ApiFact, ApiSettings, ApiProfile, ApiEpisode, ApiPattern } from "@/lib/api";
 
 export interface Message {
   id: string;
@@ -26,6 +26,25 @@ export interface Fact {
   source: "manual" | "auto" | "memory_gate";
   confidence?: number;
   status?: "active" | "needs_review" | "archived";
+}
+
+export interface Episode {
+  id: string;
+  title: string;
+  summary: string;
+  sessionId?: string;
+  happenedAt?: string;
+  category: string;
+  createdAt: string;
+}
+
+export interface Pattern {
+  id: string;
+  text: string;
+  category: string;
+  evidence?: string;
+  count: number;
+  lastSeen: string;
 }
 
 export interface LLMConfig {
@@ -176,6 +195,47 @@ Rules:
 - Do NOT start with "Это..." or "Пользователь..." — start with their name or role
 - Maximum 120 words`;
 
+const EPISODE_SYSTEM = `You are an episodic memory curator for a personal AI assistant.
+Analyze this conversation and decide if it contains a notable EVENT or EXPERIENCE worth remembering as an episode.
+
+An episode is: a specific thing that happened, a decision made, a trip taken, a problem solved, a meeting held, an emotion experienced, a milestone reached — something with temporal context.
+
+NOT an episode: general facts about a person, preferences, abstract information.
+
+Return ONLY valid JSON (no markdown):
+{"has_episode": false, "episode": null}
+OR
+{"has_episode": true, "episode": {"title": "short title (5-8 words)", "summary": "2-4 sentences describing what happened", "category": "Событие|Путешествие|Встреча|Решение|Достижение|Проблема|Другое", "happened_at": "YYYY-MM-DD or null"}}
+
+Be selective — only save genuinely noteworthy moments, not every conversation.`;
+
+const PATTERN_SYSTEM = `You are a pattern recognition engine for a personal AI assistant.
+Analyze the recent conversation history (multiple sessions) and identify RECURRING THEMES or PATTERNS.
+
+A pattern is: a topic the person keeps returning to, an emotion they repeatedly express, a recurring problem, a habit, a consistent desire or concern.
+
+Return ONLY valid JSON (no markdown):
+{"patterns": [{"text": "one sentence describing the pattern", "category": "Эмоция|Тема|Привычка|Проблема|Желание", "evidence": "brief quote or reference from the conversation"}]}
+
+Return empty array if no clear patterns found. Maximum 3 patterns per call. Be precise and specific.`;
+
+// Получить embedding вектор текста через OpenAI embeddings API
+async function getEmbedding(text: string, baseUrl: string, apiKey: string): Promise<number[] | null> {
+  try {
+    const embUrl = baseUrl.replace(/\/chat\/completions$/, "").replace(/\/$/, "") + "/embeddings";
+    const res = await fetch(embUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.data?.[0]?.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const DEFAULT_CONFIG: LLMConfig = {
   baseUrl: "https://api.openai.com/v1",
   apiKey: "",
@@ -223,6 +283,29 @@ function apiFactToFact(f: ApiFact): Fact {
   };
 }
 
+function apiEpisodeToEpisode(e: ApiEpisode): Episode {
+  return {
+    id: e.id,
+    title: e.title,
+    summary: e.summary,
+    sessionId: e.session_id,
+    happenedAt: e.happened_at,
+    category: e.category,
+    createdAt: e.created_at,
+  };
+}
+
+function apiPatternToPattern(p: ApiPattern): Pattern {
+  return {
+    id: p.id,
+    text: p.text,
+    category: p.category,
+    evidence: p.evidence,
+    count: p.count,
+    lastSeen: p.last_seen,
+  };
+}
+
 function apiSettingsToConfig(s: ApiSettings): LLMConfig {
   const toggles = s.toggles ?? { autoExtract: true, antiDuplicates: true, topFacts: true };
   return {
@@ -245,6 +328,9 @@ export function useChatStore() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   const [facts, setFacts] = useState<Fact[]>([]);
+  const [episodes, setEpisodes] = useState<Episode[]>([]);
+  const [patterns, setPatterns] = useState<Pattern[]>([]);
+  const [proactiveNote, setProactiveNote] = useState<string | null>(null);
   const [gateMessageCount, setGateMessageCount] = useState(0);
   const gateBatchRef = React.useRef<Array<{ user: string; assistant: string }>>([]);
   const [portrait, setPortrait] = useState<string>("");
@@ -289,11 +375,13 @@ export function useChatStore() {
   useEffect(() => {
     async function boot() {
       try {
-        const [apiSessions, apiFacts, apiSettings, apiSummaries] = await Promise.all([
+        const [apiSessions, apiFacts, apiSettings, apiSummaries, apiEpisodes, apiPatterns] = await Promise.all([
           api.sessions.list(),
           api.facts.list({ include_review: true }),
           api.settings.get(),
           api.summaries.list().catch(() => []),
+          api.episodes.list({ limit: 100 }).catch(() => []),
+          api.patterns.list().catch(() => []),
         ]);
 
         const sessionsData = apiSessions.map(apiSessionToSession);
@@ -319,6 +407,8 @@ export function useChatStore() {
           }
         }
         setSummaries(summaryMap);
+        setEpisodes(apiEpisodes.map(apiEpisodeToEpisode));
+        setPatterns(apiPatterns.map(apiPatternToPattern));
       } catch (_) {
         setAppError("Не удалось подключиться к серверу");
       } finally {
@@ -555,6 +645,126 @@ Rules:
     return text;
   }, [config, facts, summaries]);
 
+  // ── Episodic Memory: детектор событий ─────────────────────────
+  const runEpisodeDetector = useCallback(async (
+    batch: Array<{ user: string; assistant: string }>,
+    sessionId: string,
+    cfg = config
+  ) => {
+    if (!cfg.apiKey || !cfg.baseUrl || batch.length === 0) return;
+    try {
+      const dialogText = batch
+        .map((p) => `USER: ${p.user}\nASSISTANT: ${p.assistant}`)
+        .join("\n\n");
+
+      const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` },
+        body: JSON.stringify({
+          model: cfg.model,
+          temperature: 0.0,
+          max_tokens: 512,
+          messages: [
+            { role: "system", content: EPISODE_SYSTEM },
+            { role: "user", content: dialogText },
+          ],
+        }),
+      });
+
+      if (!res.ok) return;
+      const data = await res.json();
+      const raw: string = data?.choices?.[0]?.message?.content ?? "";
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return;
+
+      const result: { has_episode: boolean; episode?: { title: string; summary: string; category: string; happened_at?: string } } = JSON.parse(match[0]);
+      if (!result.has_episode || !result.episode) return;
+
+      const { title, summary, category, happened_at } = result.episode;
+      const embedding = await getEmbedding(title + " " + summary, cfg.baseUrl, cfg.apiKey);
+
+      const saved = await api.episodes.create({
+        title,
+        summary,
+        session_id: sessionId,
+        happened_at: happened_at ?? undefined,
+        category,
+        embedding: embedding ?? undefined,
+      });
+
+      setEpisodes((prev) => [apiEpisodeToEpisode(saved), ...prev]);
+      console.log(`[EPISODE] saved: ${title}`);
+    } catch (e) {
+      console.warn("[EPISODE] failed", e);
+    }
+  }, [config]);
+
+  // ── Pattern Detector: фоновый анализ повторяющихся тем ────────
+  const runPatternDetector = useCallback(async (cfg = config) => {
+    if (!cfg.apiKey || !cfg.baseUrl) return;
+    try {
+      // Берём последние 20 сообщений пользователя для анализа паттернов
+      const allUserMsgs = sessions
+        .flatMap((s) => s.messages)
+        .filter((m) => m.role === "user")
+        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+        .slice(0, 20)
+        .map((m) => m.content)
+        .join("\n");
+
+      if (!allUserMsgs.trim()) return;
+
+      const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.apiKey}` },
+        body: JSON.stringify({
+          model: cfg.model,
+          temperature: 0.2,
+          max_tokens: 512,
+          messages: [
+            { role: "system", content: PATTERN_SYSTEM },
+            { role: "user", content: `Recent user messages:\n${allUserMsgs}` },
+          ],
+        }),
+      });
+
+      if (!res.ok) return;
+      const data = await res.json();
+      const raw: string = data?.choices?.[0]?.message?.content ?? "";
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return;
+
+      const result: { patterns: Array<{ text: string; category: string; evidence: string }> } = JSON.parse(match[0]);
+      if (!result.patterns?.length) return;
+
+      for (const p of result.patterns) {
+        const saved = await api.patterns.upsert({ text: p.text, category: p.category, evidence: p.evidence });
+        console.log(`[PATTERN] ${saved.updated ? "updated" : "new"} (count=${saved.count}): ${p.text}`);
+
+        // Проактивное уведомление если паттерн появился 3+ раз
+        if (saved.count >= 3) {
+          setProactiveNote(p.text);
+        }
+      }
+
+      const fresh = await api.patterns.list().catch(() => []);
+      setPatterns(fresh.map(apiPatternToPattern));
+    } catch (e) {
+      console.warn("[PATTERN] failed", e);
+    }
+  }, [config, sessions]);
+
+  // ── Embedding для фактов (фоновый) ────────────────────────────
+  const embedFactsBackground = useCallback(async (factIds: string[], factTexts: string[], cfg = config) => {
+    if (!cfg.apiKey || !cfg.baseUrl) return;
+    for (let i = 0; i < factIds.length; i++) {
+      const emb = await getEmbedding(factTexts[i], cfg.baseUrl, cfg.apiKey);
+      if (emb) {
+        await api.facts.setEmbedding(factIds[i], emb).catch(() => null);
+      }
+    }
+  }, [config]);
+
   // Регистрируем refs — для forward-ссылок между функциями
   runPortraitRef.current = runPortrait;
   runConsolidationRef.current = runConsolidation;
@@ -619,11 +829,19 @@ Rules:
         setTimeout(() => setLastSavedCount(0), 4000);
         setNewFactIds((prev) => new Set([...prev, ...newFacts.map((f) => f.id)]));
 
+        // Фоново генерируем embeddings для новых фактов
+        setTimeout(() => {
+          embedFactsBackground(
+            newFacts.map((f) => f.id),
+            newFacts.map((f) => f.content),
+            cfg
+          );
+        }, 1000);
+
         // Автоконсолидация: накопилось достаточно новых фактов
         factsSinceConsolidationRef.current += newFacts.length;
         if (factsSinceConsolidationRef.current >= AUTO_CONSOLIDATE_THRESHOLD) {
           console.log(`[GATE] auto-consolidation triggered (${factsSinceConsolidationRef.current} new facts)`);
-          // Запускаем фоново — не блокируем
           setTimeout(() => {
             runConsolidationRef.current?.()
               .then(() => {
@@ -637,7 +855,7 @@ Rules:
     } catch (e) {
       console.warn("[GATE] failed", e);
     }
-  }, [config]);
+  }, [config, embedFactsBackground]);
 
   const isProfileCommand = (t: string): boolean => {
     const q = t.toLowerCase().trim();
@@ -773,8 +991,7 @@ Rules:
             ? `\n\n[Контекст по разделам:\n${summaryLines}]`
             : "";
 
-          // Слой 3: релевантные факты — гибридный RAG
-          // keywords → если < 3 результатов → ILIKE fallback (уже в бэкенде)
+          // Слой 3: релевантные факты — гибридный RAG (semantic + keyword)
           let ragBlock = "";
           if (facts.length > 0) {
             let ragFacts: Array<{ category: string; subcategory?: string; content?: string; text?: string }> = [];
@@ -782,13 +999,27 @@ Rules:
               ragFacts = facts;
             } else {
               try {
-                const fetched = await api.facts.relevant(text, 8);
-                // Гибридный порог: если нашли < 3 — добавляем свежие факты до 8 штук
-                if (fetched.length >= 3) {
-                  ragFacts = fetched;
+                // Сначала пробуем semantic search через embeddings
+                const queryEmb = await getEmbedding(text, config.baseUrl, config.apiKey);
+                if (queryEmb) {
+                  const semFacts = await api.facts.semanticSearch(queryEmb, 8).catch(() => []);
+                  if (semFacts.length >= 3) {
+                    ragFacts = semFacts;
+                  } else {
+                    // Fallback: keyword RAG
+                    const kwFacts = await api.facts.relevant(text, 8);
+                    const combined = [...semFacts, ...kwFacts.filter((k) => !semFacts.find((s) => s.id === k.id))];
+                    ragFacts = combined.slice(0, 8);
+                  }
                 } else {
-                  const fallback = facts.filter((f) => !fetched.find((r) => r.id === f.id));
-                  ragFacts = [...fetched, ...fallback].slice(0, 8);
+                  // Embedding недоступен — keyword fallback
+                  const fetched = await api.facts.relevant(text, 8);
+                  if (fetched.length >= 3) {
+                    ragFacts = fetched;
+                  } else {
+                    const fallback = facts.filter((f) => !fetched.find((r) => r.id === f.id));
+                    ragFacts = [...fetched, ...fallback].slice(0, 8);
+                  }
                 }
               } catch {
                 ragFacts = facts.slice(0, 8);
@@ -796,15 +1027,27 @@ Rules:
             }
             const ragLines = ragFacts
               .map((f) => {
-                const label = f.subcategory ? `${f.category}/${f.subcategory}` : f.category;
-                const body = f.content ?? f.text ?? "";
+                const label = (f as Fact).subcategory ? `${f.category}/${(f as Fact).subcategory}` : f.category;
+                const body = (f as Fact).content ?? (f as ApiFact).text ?? "";
                 return `- [${label}] ${body}`;
               })
               .join("\n");
             if (ragLines) ragBlock = `\n\n[Детали:\n${ragLines}]`;
           }
 
-          const systemContent = config.systemPrompt + portraitBlock + summaryBlock + ragBlock;
+          // Слой 4: релевантные эпизоды (события из прошлого)
+          let episodeBlock = "";
+          if (episodes.length > 0) {
+            try {
+              const relEpisodes = await api.episodes.relevant(text, 3);
+              if (relEpisodes.length > 0) {
+                const lines = relEpisodes.map((e) => `- [${e.category}${e.happened_at ? ` · ${e.happened_at}` : ""}] ${e.title}: ${e.summary}`).join("\n");
+                episodeBlock = `\n\n[Из прошлого:\n${lines}]`;
+              }
+            } catch { /* ignore */ }
+          }
+
+          const systemContent = config.systemPrompt + portraitBlock + summaryBlock + ragBlock + episodeBlock;
 
           // История с умной обрезкой под финальный системный промпт
           const history = trimHistory(
@@ -886,10 +1129,22 @@ Rules:
           const batch = [...gateBatchRef.current];
           gateBatchRef.current = [];
           runMemoryGate(batch, facts, config);
+
+          // Episodic memory: ищем события в том же батче
+          setTimeout(() => {
+            runEpisodeDetector(batch, activeSessionId, config);
+          }, 3000);
+
+          // Паттерны: анализируем каждые 12 сообщений
+          if (nextCount % 12 === 0) {
+            setTimeout(() => {
+              runPatternDetector(config);
+            }, 6000);
+          }
         }
       }
     },
-    [activeSessionId, activeSession, config, facts, isThinking, runMemoryGate, gateMessageCount]
+    [activeSessionId, activeSession, config, facts, isThinking, runMemoryGate, gateMessageCount, runEpisodeDetector, runPatternDetector]
   );
 
   const clearFacts = useCallback(async () => {
@@ -946,12 +1201,26 @@ Rules:
     }
   }, []);
 
+  const dismissPattern = useCallback(async (id: string) => {
+    setPatterns((prev) => prev.filter((p) => p.id !== id));
+    await api.patterns.dismiss(id).catch(() => null);
+  }, []);
+
+  const archiveEpisode = useCallback(async (id: string) => {
+    setEpisodes((prev) => prev.filter((e) => e.id !== id));
+    await api.episodes.archive(id).catch(() => null);
+  }, []);
+
   return {
     sessions,
     activeSession,
     activeSessionId,
     facts,
     summaries,
+    episodes,
+    patterns,
+    proactiveNote,
+    clearProactiveNote: () => setProactiveNote(null),
     config,
     isThinking,
     loading,
@@ -975,5 +1244,9 @@ Rules:
     updatedSummaryCategories,
     clearUpdatedSummaries: () => setUpdatedSummaryCategories(new Set()),
     prevSummaries,
+    dismissPattern,
+    archiveEpisode,
+    runEpisodeDetector,
+    runPatternDetector,
   };
 }

@@ -139,6 +139,17 @@ export const api = {
       }),
     clear: () =>
       request<{ cleared: number }>("facts", "clear", { method: "POST" }),
+    semanticSearch: (embedding: number[], limit = 8) =>
+      request<Array<ApiFact & { score: number }>>("facts", "semantic", {
+        method: "POST",
+        body: JSON.stringify({ embedding, limit }),
+      }),
+    setEmbedding: (id: string, embedding: number[]) =>
+      request<{ updated: string }>("facts", "set_embedding", {
+        method: "POST",
+        id,
+        body: JSON.stringify({ embedding }),
+      }),
   },
 
   summaries: {
@@ -166,4 +177,53 @@ export const api = {
         body: JSON.stringify(data),
       }),
   },
+
+  episodes: {
+    list: (params?: { session_id?: string; limit?: number }) => {
+      const qs: Record<string, string> = {};
+      if (params?.session_id) qs.session_id = params.session_id;
+      if (params?.limit) qs.limit = String(params.limit);
+      return request<ApiEpisode[]>("episodes", "list", { qs });
+    },
+    create: (data: { title: string; summary: string; session_id?: string; happened_at?: string; category?: string; embedding?: number[] }) =>
+      request<ApiEpisode>("episodes", "create", { method: "POST", body: JSON.stringify(data) }),
+    relevant: (q: string, limit = 5) =>
+      request<ApiEpisode[]>("episodes", "relevant", { qs: { q, limit: String(limit) } }),
+    archive: (id: string) =>
+      request<{ archived: string }>("episodes", "delete", { method: "DELETE", id }),
+  },
+
+  patterns: {
+    list: () => request<ApiPattern[]>("patterns", "list"),
+    upsert: (data: { text: string; category?: string; evidence?: string }) =>
+      request<{ id: string; count: number; updated: boolean }>("patterns", "upsert", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    dismiss: (id: string) =>
+      request<{ dismissed: string }>("patterns", "dismiss", { method: "POST", id }),
+  },
+
 };
+
+export interface ApiEpisode {
+  id: string;
+  title: string;
+  summary: string;
+  session_id?: string;
+  happened_at?: string;
+  category: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface ApiPattern {
+  id: string;
+  text: string;
+  category: string;
+  evidence?: string;
+  count: number;
+  last_seen: string;
+  status: string;
+  created_at: string;
+}

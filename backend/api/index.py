@@ -195,6 +195,30 @@ def route(event: dict) -> dict:
         if a == "save" or (not a and method == "POST"):
             return summaries_save(body)
 
+    if r == "episodes":
+        if a == "list" or (not a and method == "GET"):
+            return episodes_list(qs)
+        if a == "create" or (not a and method == "POST"):
+            return episodes_create(body)
+        if a == "relevant":
+            return episodes_relevant(qs)
+        if a == "delete" or (not a and method == "DELETE"):
+            return episodes_delete(rid)
+
+    if r == "patterns":
+        if a == "list" or (not a and method == "GET"):
+            return patterns_list()
+        if a == "upsert" or (not a and method == "POST"):
+            return patterns_upsert(body)
+        if a == "dismiss":
+            return patterns_dismiss(rid)
+
+    if r == "facts":
+        if a == "semantic" and method == "POST":
+            return facts_semantic_post(body)
+        if a == "set_embedding" and method == "POST":
+            return facts_set_embedding(rid, body)
+
     return err(f"Unknown r={r} a={a}", 404)
 
 
@@ -919,8 +943,270 @@ def summaries_save(body: dict) -> dict:
         con.close()
 
 
+# ── Semantic / Embedding helpers ───────────────────────────────
+
+def _cosine_sim(a: list, b: list) -> float:
+    """Косинусное сходство двух векторов (списки float)."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def facts_set_embedding(fid: str, body: dict) -> dict:
+    """Сохраняет embedding вектор для факта."""
+    if not fid:
+        return err("id required")
+    embedding = body.get("embedding")
+    if not embedding or not isinstance(embedding, list):
+        return err("embedding must be a list of floats")
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "UPDATE facts SET embedding = %s, updated_at = %s WHERE id = %s",
+                (embedding, now_iso(), fid),
+            )
+        con.commit()
+        return ok({"updated": fid})
+    finally:
+        con.close()
+
+
+def facts_semantic(qs: dict) -> dict:
+    """Семантический поиск фактов по embedding вектору запроса."""
+    raw_limit = qs.get("limit", "8")
+    limit = int(raw_limit) if raw_limit.isdigit() else 8
+    # Embedding передаётся в теле — но роут GET, поэтому принимаем как JSON в query (base64 не нужен)
+    # Фронтенд передаёт embedding через POST body на /facts?a=semantic
+    return err("Use POST with embedding in body", 405)
+
+
+def facts_semantic_post(body: dict) -> dict:
+    """Семантический поиск фактов по embedding вектору (POST)."""
+    query_emb = body.get("embedding")
+    limit = int(body.get("limit", 8))
+    if not query_emb or not isinstance(query_emb, list):
+        return err("embedding required")
+
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "SELECT id, text, category, subcategory, source, confidence, status, created_at, embedding "
+                "FROM facts WHERE status = 'active' AND embedding IS NOT NULL"
+            )
+            rows = rows_to_list(cur)
+        con.commit()
+    finally:
+        con.close()
+
+    scored = []
+    for row in rows:
+        emb = row.get("embedding")
+        if emb:
+            sim = _cosine_sim(query_emb, emb)
+            scored.append({**row, "score": sim})
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return ok(scored[:limit])
+
+
+# ── Episodes ───────────────────────────────────────────────────
+
+def episodes_list(qs: dict) -> dict:
+    """Список эпизодов, опционально фильтр по session_id."""
+    session_id = qs.get("session_id", "")
+    raw_limit = qs.get("limit", "50")
+    limit = int(raw_limit) if raw_limit.isdigit() else 50
+
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            if session_id:
+                cur.execute(
+                    "SELECT id, title, summary, session_id, happened_at, category, created_at, updated_at "
+                    "FROM episodes WHERE session_id = %s AND status = 'active' ORDER BY created_at DESC LIMIT %s",
+                    (session_id, limit),
+                )
+            else:
+                cur.execute(
+                    "SELECT id, title, summary, session_id, happened_at, category, created_at, updated_at "
+                    "FROM episodes WHERE status = 'active' ORDER BY created_at DESC LIMIT %s",
+                    (limit,),
+                )
+            rows = rows_to_list(cur)
+        con.commit()
+        return ok(rows)
+    finally:
+        con.close()
+
+
+def episodes_create(body: dict) -> dict:
+    """Создаёт эпизод (событие) в памяти."""
+    title = (body.get("title") or "").strip()
+    summary = (body.get("summary") or "").strip()
+    if not title or not summary:
+        return err("title and summary required")
+
+    eid = str(uuid.uuid4())
+    ts = now_iso()
+    session_id = body.get("session_id") or None
+    happened_at = body.get("happened_at") or None
+    category = body.get("category", "Событие")
+    embedding = body.get("embedding") or None
+
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "INSERT INTO episodes (id, title, summary, session_id, happened_at, category, embedding, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (eid, title, summary, session_id, happened_at, category, embedding, ts, ts),
+            )
+        con.commit()
+        return ok({"id": eid, "title": title, "summary": summary, "category": category,
+                   "session_id": session_id, "happened_at": happened_at, "created_at": ts}, 201)
+    finally:
+        con.close()
+
+
+def episodes_relevant(qs: dict) -> dict:
+    """Эпизоды релевантные запросу — keyword fallback (без embedding)."""
+    q = (qs.get("q") or "").strip()
+    raw_limit = qs.get("limit", "5")
+    limit = int(raw_limit) if raw_limit.isdigit() else 5
+
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            if q:
+                words = _query_words(q)
+                if words:
+                    conditions = " OR ".join(["summary ILIKE %s OR title ILIKE %s"] * len(words))
+                    params = []
+                    for w in words:
+                        params += [f"%{w}%", f"%{w}%"]
+                    params.append(limit)
+                    cur.execute(
+                        f"SELECT id, title, summary, session_id, happened_at, category, created_at "
+                        f"FROM episodes WHERE ({conditions}) ORDER BY created_at DESC LIMIT %s",
+                        params,
+                    )
+                else:
+                    cur.execute(
+                        "SELECT id, title, summary, session_id, happened_at, category, created_at "
+                        "FROM episodes ORDER BY created_at DESC LIMIT %s", (limit,)
+                    )
+            else:
+                cur.execute(
+                    "SELECT id, title, summary, session_id, happened_at, category, created_at "
+                    "FROM episodes ORDER BY created_at DESC LIMIT %s", (limit,)
+                )
+            rows = rows_to_list(cur)
+        con.commit()
+        return ok(rows)
+    finally:
+        con.close()
+
+
+def episodes_delete(eid: str) -> dict:
+    if not eid:
+        return err("id required")
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "UPDATE episodes SET status = 'archived', updated_at = %s WHERE id = %s",
+                (now_iso(), eid),
+            )
+            if cur.rowcount == 0:
+                return err("episode not found", 404)
+        con.commit()
+        return ok({"archived": eid})
+    finally:
+        con.close()
+
+
+# ── Patterns ───────────────────────────────────────────────────
+
+def patterns_list() -> dict:
+    """Активные паттерны поведения/тем."""
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "SELECT id, text, category, evidence, count, last_seen, status, created_at "
+                "FROM patterns WHERE status = 'active' ORDER BY count DESC, last_seen DESC"
+            )
+            rows = rows_to_list(cur)
+        con.commit()
+        return ok(rows)
+    finally:
+        con.close()
+
+
+def patterns_upsert(body: dict) -> dict:
+    """Создаёт или обновляет паттерн (по тексту — если похожий уже есть, инкрементируем count)."""
+    text = (body.get("text") or "").strip()
+    if not text:
+        return err("text required")
+    category = body.get("category", "Паттерн")
+    evidence = body.get("evidence") or None
+    ts = now_iso()
+
+    norm = re.sub(r"\s+", " ", text.lower())[:120]
+
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "SELECT id, count FROM patterns WHERE LOWER(text) = %s AND status = 'active' LIMIT 1",
+                (norm,),
+            )
+            existing = cur.fetchone()
+            if existing:
+                pid, cnt = existing
+                cur.execute(
+                    "UPDATE patterns SET count = %s, last_seen = %s, evidence = COALESCE(%s, evidence) WHERE id = %s",
+                    (cnt + 1, ts, evidence, pid),
+                )
+                con.commit()
+                return ok({"id": pid, "count": cnt + 1, "updated": True})
+            else:
+                pid = str(uuid.uuid4())
+                cur.execute(
+                    "INSERT INTO patterns (id, text, category, evidence, count, last_seen, status, created_at) "
+                    "VALUES (%s, %s, %s, %s, 1, %s, 'active', %s)",
+                    (pid, text, category, evidence, ts, ts),
+                )
+                con.commit()
+                return ok({"id": pid, "count": 1, "updated": False}, 201)
+    finally:
+        con.close()
+
+
+def patterns_dismiss(pid: str) -> dict:
+    """Скрывает паттерн (dismissed)."""
+    if not pid:
+        return err("id required")
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "UPDATE patterns SET status = 'dismissed' WHERE id = %s",
+                (pid,),
+            )
+        con.commit()
+        return ok({"dismissed": pid})
+    finally:
+        con.close()
+
+
 # ── Entry point ────────────────────────────────────────────────
 
 def handler(event: dict, context) -> dict:
-    """Персональный ассистент API: sessions, messages, facts, settings + авто-извлечение фактов."""
+    """Персональный ассистент API: sessions, messages, facts, settings, episodes, patterns."""
     return route(event)

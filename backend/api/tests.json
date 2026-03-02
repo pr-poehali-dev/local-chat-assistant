@@ -36,6 +36,20 @@
       "path": "/?r=summaries&a=list",
       "expectedStatus": 200,
       "bodyMatcher": "none"
+    },
+    {
+      "name": "GET episodes list — returns 200",
+      "method": "GET",
+      "path": "/?r=episodes&a=list",
+      "expectedStatus": 200,
+      "bodyMatcher": "none"
+    },
+    {
+      "name": "GET patterns list — returns 200",
+      "method": "GET",
+      "path": "/?r=patterns&a=list",
+      "expectedStatus": 200,
+      "bodyMatcher": "none"
     }
   ]
 }
