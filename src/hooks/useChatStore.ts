@@ -679,74 +679,69 @@ Rules:
 
           // ── Стратегия памяти ──────────────────────────────────────────────
           //
-          // ПОРТРЕТ (compact, ~100 токенов) — ВСЕГДА в системном промпте.
-          // Это "кто передо мной" — цена мизерная, ценность огромная.
+          // Три слоя, фиксированный объём независимо от размера базы:
           //
-          // РЕЗЮМЕ + ФАКТЫ — только при первом сообщении сессии ИЛИ
-          // когда история начала обрезаться (LLM реально забыла).
-          // В остальных случаях LLM видит их из истории первого запроса.
+          // 1. ПОРТРЕТ компактный (~100 токенов) — ВСЕГДА
+          //    "Кто передо мной" — идентичность пользователя в каждом запросе
           //
-          // Итог: минимум токенов, максимум понимания.
+          // 2. РЕЗЮМЕ всех категорий (~300-500 токенов) — ВСЕГДА
+          //    Периферийное зрение: LLM видит всю картину жизни/бизнеса
+          //    даже когда разговор про конкретную тему
+          //
+          // 3. РЕЛЕВАНТНЫЕ ФАКТЫ по RAG (~200-300 токенов) — ВСЕГДА
+          //    Точные детали под текущий вопрос, 8-10 штук
+          //
+          // Итого: ~600-900 токенов памяти, не растёт с размером базы
           // ─────────────────────────────────────────────────────────────────
 
-          const isFirstMessage = currentMsgs.length === 0;
-
-          // Сначала строим историю без тяжёлой памяти
-          const historyRaw = trimHistory(
-            currentMsgs,
-            estimateTokens(config.systemPrompt),
-            config.maxTokens,
-            contextLimit
-          );
-          const historyIsTrimmed = historyRaw.length < currentMsgs.length;
-          const needsFullMemory = isFirstMessage || historyIsTrimmed;
-
-          // Портрет — всегда, но компактно (первые 2 предложения)
+          // Слой 1: компактный портрет
           const portraitCompact = portrait ? compactPortrait(portrait) : "";
           const portraitBlock = portraitCompact
             ? `\n\n[О пользователе: ${portraitCompact}]`
             : "";
 
-          // Резюме + факты — только когда нужно
-          let detailBlock = "";
-          if (needsFullMemory && (Object.keys(summaries).length > 0 || facts.length > 0)) {
-            const summaryLines = Object.entries(summaries)
-              .filter(([, s]) => s)
-              .map(([cat, s]) => `${cat}: ${s}`)
-              .join("\n");
+          // Слой 2: резюме всех категорий (всегда, фиксированный объём)
+          const summaryLines = Object.entries(summaries)
+            .filter(([cat, s]) => s && cat !== "__portrait__")
+            .map(([cat, s]) => `${cat}: ${s}`)
+            .join("\n");
+          const summaryBlock = summaryLines
+            ? `\n\n[Контекст по разделам:\n${summaryLines}]`
+            : "";
 
-            let factLines = "";
-            if (facts.length > 0 && facts.length <= 60) {
-              factLines = facts
-                .map((f) => `- [${f.subcategory ? `${f.category}/${f.subcategory}` : f.category}] ${f.content}`)
-                .join("\n");
-            } else if (facts.length > 60) {
+          // Слой 3: релевантные факты по RAG (всегда, 8-10 штук)
+          let ragBlock = "";
+          if (facts.length > 0) {
+            let ragFacts: Array<{ category: string; subcategory?: string; content?: string; text?: string }> = [];
+            if (facts.length <= 20) {
+              ragFacts = facts;
+            } else {
               try {
-                const fetched = await api.facts.relevant(text, 15);
-                if (fetched.length > 0) {
-                  factLines = fetched
-                    .map((f) => `- [${f.subcategory ? `${f.category}/${f.subcategory}` : f.category}] ${f.text}`)
-                    .join("\n");
-                }
-              } catch { /* без деталей */ }
+                const fetched = await api.facts.relevant(text, 8);
+                ragFacts = fetched.length > 0 ? fetched : facts.slice(0, 8);
+              } catch {
+                ragFacts = facts.slice(0, 8);
+              }
             }
-
-            const parts = [
-              summaryLines ? `РАЗДЕЛЫ:\n${summaryLines}` : "",
-              factLines ? `ФАКТЫ:\n${factLines}` : "",
-            ].filter(Boolean);
-
-            if (parts.length > 0) {
-              detailBlock = `\n\n════ ПАМЯТЬ ════\n${parts.join("\n\n")}\n════════════════`;
-            }
+            const ragLines = ragFacts
+              .map((f) => {
+                const label = f.subcategory ? `${f.category}/${f.subcategory}` : f.category;
+                const body = f.content ?? f.text ?? "";
+                return `- [${label}] ${body}`;
+              })
+              .join("\n");
+            if (ragLines) ragBlock = `\n\n[Детали:\n${ragLines}]`;
           }
 
-          const systemContent = config.systemPrompt + portraitBlock + detailBlock;
+          const systemContent = config.systemPrompt + portraitBlock + summaryBlock + ragBlock;
 
-          // История: если добавили тяжёлую память — пересчитываем с учётом её веса
-          const history = needsFullMemory
-            ? trimHistory(currentMsgs, estimateTokens(systemContent), config.maxTokens, contextLimit)
-            : historyRaw;
+          // История с умной обрезкой под финальный системный промпт
+          const history = trimHistory(
+            currentMsgs,
+            estimateTokens(systemContent),
+            config.maxTokens,
+            contextLimit
+          );
 
           const res = await fetch(`${config.baseUrl}/chat/completions`, {
             method: "POST",
