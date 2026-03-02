@@ -58,9 +58,7 @@ export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript, onHa
         streamRef.current = null;
 
         const blob = new Blob(chunksRef.current, { type: mimeType });
-        console.error("[Voice] blob size:", blob.size, "chunks:", chunksRef.current.length, "mimeType:", mimeType);
         if (blob.size < 1000) {
-          console.error("[Voice] blob too small, skipping");
           setVoiceState("idle");
           return;
         }
@@ -68,14 +66,13 @@ export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript, onHa
         setVoiceState("processing");
         try {
           const transcript = await transcribeAudio(blob, baseUrl, apiKey);
-          console.error("[Voice] transcript result:", JSON.stringify(transcript));
+
           if (transcript === "__hallucination__") {
             setError("Речь не распознана. Говорите чётче или ближе к микрофону.");
           } else if (transcript.trim()) {
             onTranscript(transcript.trim());
           }
         } catch (e: unknown) {
-          console.error("[Voice] transcribe error:", String(e));
           setError(e instanceof Error ? e.message : "Ошибка распознавания");
         } finally {
           setVoiceState("idle");
@@ -150,7 +147,11 @@ export function useVoice({ baseUrl, apiKey, speechRate = 1.0, onTranscript, onHa
         setVoiceState("idle");
       };
 
-      await audio.play();
+      await audio.play().catch(() => {
+        URL.revokeObjectURL(url);
+        audioRef.current = null;
+        setVoiceState("idle");
+      });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Ошибка озвучки");
       setVoiceState("idle");
@@ -186,9 +187,7 @@ async function transcribeAudio(blob: Blob, baseUrl: string, apiKey: string): Pro
 
   const data = await res.json();
   const text: string = data.text ?? "";
-  console.error("[Whisper raw]", JSON.stringify(text));
   const isHallu = isWhisperHallucination(text);
-  console.error("[Whisper hallucination?]", isHallu);
   return isHallu ? "__hallucination__" : text;
 }
 
