@@ -671,49 +671,56 @@ Rules:
           const currentMsgs = (activeSession?.messages ?? []).filter((m) => m.id !== tempId);
           const contextLimit = getModelContextLimit(config.model);
 
-          // ── Слой 1: Портрет (всегда, ~400 токенов) ──
-          const portraitBlock = portrait
-            ? `\n\n════════════════════════════════\nКТО ЭТОТ ЧЕЛОВЕК (твоя долгосрочная память):\n${portrait}\n════════════════════════════════`
-            : "";
+          // ── Определяем нужен ли контекст памяти ──
+          // Сначала считаем историю без контекста
+          const historyRaw = trimHistory(currentMsgs, estimateTokens(config.systemPrompt), config.maxTokens, contextLimit);
+          // История "обрезана" если мы потеряли начало сессии
+          const historyIsTrimmed = historyRaw.length < currentMsgs.length;
+          // Первое сообщение сессии — LLM ещё ничего не знает
+          const isFirstMessage = currentMsgs.length === 0;
 
-          // ── Слой 2: Резюме + факты — только если история короткая ──
-          // Когда сессия молодая (≤6 реплик), история ещё не содержит контекст — подкидываем детали
-          // Когда сессия длинная — LLM уже видела всё это в истории, экономим токены
-          const isShortSession = currentMsgs.length <= 6;
-          let detailBlock = "";
+          // Память нужна когда: начало сессии ИЛИ история обрезалась (LLM забыла)
+          const needsMemory = isFirstMessage || historyIsTrimmed;
 
-          if (isShortSession) {
+          let memoryBlock = "";
+          if (needsMemory) {
+            const portraitPart = portrait
+              ? `КТО ЭТОТ ЧЕЛОВЕК:\n${portrait}`
+              : "";
+
             const summaryLines = Object.entries(summaries)
               .filter(([, s]) => s)
-              .map(([cat, s]) => `### ${cat}\n${s}`)
+              .map(([cat, s]) => `${cat}: ${s}`)
               .join("\n\n");
 
             let factLines = "";
             if (facts.length > 0 && facts.length <= 60) {
-              factLines = facts.map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.content}`).join("\n");
+              factLines = facts
+                .map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.content}`)
+                .join("\n");
             } else if (facts.length > 60) {
               try {
                 const fetched = await api.facts.relevant(text, 15);
                 if (fetched.length > 0) {
-                  factLines = fetched.map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.text}`).join("\n");
+                  factLines = fetched
+                    .map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.text}`)
+                    .join("\n");
                 }
-              } catch { /* fallback — без деталей */ }
+              } catch { /* без деталей */ }
             }
 
-            if (summaryLines || factLines) {
-              detailBlock = `\n\n${summaryLines ? `📋 РАЗДЕЛЫ:\n${summaryLines}` : ""}${factLines ? `\n\n📌 ДЕТАЛИ:\n${factLines}` : ""}`;
+            const parts = [portraitPart, summaryLines ? `РАЗДЕЛЫ:\n${summaryLines}` : "", factLines ? `ДЕТАЛИ:\n${factLines}` : ""].filter(Boolean);
+            if (parts.length > 0) {
+              memoryBlock = `\n\n════ ДОЛГОСРОЧНАЯ ПАМЯТЬ ════\n${parts.join("\n\n")}\n════════════════════════════`;
             }
           }
 
-          const systemContent = config.systemPrompt + portraitBlock + detailBlock;
+          const systemContent = config.systemPrompt + memoryBlock;
 
-          // ── История с умной обрезкой по токенам ──
-          const history = trimHistory(
-            currentMsgs,
-            estimateTokens(systemContent),
-            config.maxTokens,
-            contextLimit
-          );
+          // ── История: пересчитываем с учётом финального системного промпта ──
+          const history = needsMemory
+            ? trimHistory(currentMsgs, estimateTokens(systemContent), config.maxTokens, contextLimit)
+            : historyRaw;
 
           const res = await fetch(`${config.baseUrl}/chat/completions`, {
             method: "POST",
