@@ -177,5 +177,27 @@ async function transcribeAudio(blob: Blob, baseUrl: string, apiKey: string): Pro
   }
 
   const data = await res.json();
-  return data.text ?? "";
+  const text: string = data.text ?? "";
+  return isWhisperHallucination(text) ? "" : text;
+}
+
+// Известные галлюцинации Whisper на тишине / коротком аудио
+const HALLUCINATION_PATTERNS = [
+  /редактор субтитров/i,
+  /корректор/i,
+  /синецкая/i,
+  /субтитр/i,
+  /перевод[её]?чик/i,
+  /©/,
+  /copyright/i,
+  /www\./i,
+  /https?:\/\//i,
+  /thank you for watching/i,
+  /подпишитесь на канал/i,
+  /продолжение следует/i,
+];
+
+function isWhisperHallucination(text: string): boolean {
+  if (!text.trim()) return true;
+  return HALLUCINATION_PATTERNS.some((p) => p.test(text));
 }
