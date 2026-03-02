@@ -1078,7 +1078,11 @@ Rules:
             } catch { /* ignore */ }
           }
 
-          const systemContent = config.systemPrompt + portraitBlock + summaryBlock + ragBlock + episodeBlock;
+          const onboardingBlock = facts.length === 0 && !portrait
+            ? "\n\n[База знаний пуста. Ты только знакомишься с владельцем. В ходе разговора ненавязчиво уточняй: как его зовут, чем занимается, какие цели и задачи. Задавай ОДИН вопрос в конце ответа — не несколько сразу.]"
+            : "";
+
+          const systemContent = config.systemPrompt + onboardingBlock + portraitBlock + summaryBlock + ragBlock + episodeBlock;
 
           // История с умной обрезкой под финальный системный промпт
           const history = trimHistory(
@@ -1156,7 +1160,7 @@ Rules:
         gateBatchRef.current.push({ user: text, assistant: assistantContent });
         const nextCount = gateMessageCount + 1;
         setGateMessageCount(nextCount);
-        if (nextCount % 4 === 0) {
+        if (nextCount % 2 === 0) {
           const batch = [...gateBatchRef.current];
           gateBatchRef.current = [];
           runMemoryGate(batch, facts, config);
