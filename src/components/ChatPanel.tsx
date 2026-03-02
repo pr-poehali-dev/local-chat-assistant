@@ -49,15 +49,14 @@ export default function ChatPanel({
 
   const voiceAvailable = !!apiKey && !!baseUrl;
 
-  const startRecording = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+  const toggleRecording = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     e.preventDefault();
-    _startRecording();
-  }, [_startRecording]);
-
-  const stopRecording = useCallback((e: React.MouseEvent | React.TouchEvent) => {
-    e.preventDefault();
-    _stopRecording();
-  }, [_stopRecording]);
+    if (voiceState === "recording") {
+      _stopRecording();
+    } else {
+      _startRecording();
+    }
+  }, [voiceState, _startRecording, _stopRecording]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -264,12 +263,9 @@ export default function ChatPanel({
 
           {voiceAvailable && (
             <button
-              onMouseDown={startRecording}
-              onMouseUp={stopRecording}
-              onTouchStart={startRecording}
-              onTouchEnd={stopRecording}
+              onClick={toggleRecording}
               disabled={isThinking || isProcessing}
-              title="Удерживайте для записи голоса"
+              title={isRecording ? "Нажмите чтобы остановить запись" : "Нажмите чтобы начать запись"}
               className={`flex-shrink-0 w-12 h-12 flex items-center justify-center transition-all disabled:opacity-30 ${
                 isRecording
                   ? "bg-red-500 text-white scale-110"
