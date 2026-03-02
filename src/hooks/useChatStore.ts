@@ -415,12 +415,8 @@ Rules:
     console.log("[GATE] start batch", { count: batch.length, autoExtract: cfg.autoExtract, hasKey: !!cfg.apiKey, hasUrl: !!cfg.baseUrl });
     if (!cfg.autoExtract || !cfg.apiKey || !cfg.baseUrl || batch.length === 0) return;
     try {
-      const existingSample = currentFacts.slice(0, 8)
-        .map((f) => `- [${f.category}] ${f.content}`)
-        .join("\n") || "none";
-
       const batchText = batch.map((p, i) => `--- Exchange ${i + 1} ---\nUSER: ${p.user}\nASSISTANT: ${p.assistant}`).join("\n\n");
-      const userContent = `${batchText}\n\nEXISTING FACTS (do not duplicate):\n${existingSample}`;
+      const userContent = batchText;
 
       const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
         method: "POST",
