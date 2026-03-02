@@ -264,6 +264,7 @@ export function useChatStore() {
   const [newFactIds, setNewFactIds] = useState<Set<string>>(new Set());
   const [updatedSummaryCategories, setUpdatedSummaryCategories] = useState<Set<string>>(new Set());
   const [prevSummaries, setPrevSummaries] = useState<Record<string, string>>({});
+  const [autoConsolidated, setAutoConsolidated] = useState(false);
 
   const loadSessionMessages = useCallback(async (sessionId: string) => {
     try {
@@ -609,7 +610,12 @@ Rules:
           console.log(`[GATE] auto-consolidation triggered (${factsSinceConsolidationRef.current} new facts)`);
           // Запускаем фоново — не блокируем
           setTimeout(() => {
-            runConsolidationRef.current?.().catch((e) => console.warn("[AUTO-CONSOLIDATION] failed", e));
+            runConsolidationRef.current?.()
+              .then(() => {
+                setAutoConsolidated(true);
+                setTimeout(() => setAutoConsolidated(false), 4000);
+              })
+              .catch((e) => console.warn("[AUTO-CONSOLIDATION] failed", e));
           }, 2000);
         }
       }
@@ -926,6 +932,7 @@ Rules:
     runSummaries,
     portrait,
     runPortrait,
+    autoConsolidated,
     newFactIds,
     clearNewFactIds: () => setNewFactIds(new Set()),
     updatedSummaryCategories,

@@ -51,6 +51,7 @@ export default function Index() {
     runSummaries,
     portrait,
     runPortrait,
+    autoConsolidated,
     newFactIds,
     clearNewFactIds,
     updatedSummaryCategories,
@@ -122,6 +123,14 @@ export default function Index() {
           <div className="flex items-center gap-2.5 bg-foreground text-background px-4 py-2.5 text-sm font-mono shadow-lg">
             <Icon name="BookMarked" size={14} />
             Запомнил {lastSavedCount} {lastSavedCount === 1 ? "факт" : lastSavedCount < 5 ? "факта" : "фактов"}
+          </div>
+        </div>
+      )}
+      {autoConsolidated && (
+        <div className="fixed bottom-6 right-6 z-50 animate-fade-in">
+          <div className="flex items-center gap-2.5 bg-foreground text-background px-4 py-2.5 text-sm font-mono shadow-lg">
+            <Icon name="Sparkles" size={14} />
+            База знаний оптимизирована
           </div>
         </div>
       )}
