@@ -351,6 +351,7 @@ export function useChatStore() {
   const AUTO_CONSOLIDATE_THRESHOLD = 20;
   const runPortraitRef = React.useRef<(() => Promise<string>) | null>(null);
   const runConsolidationRef = React.useRef<(() => Promise<string>) | null>(null);
+  const runPatternDetectorRef = React.useRef<((cfg?: LLMConfig) => Promise<void>) | null>(null);
   const [lastSavedCount, setLastSavedCount] = useState(0);
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [newFactIds, setNewFactIds] = useState<Set<string>>(new Set());
@@ -540,6 +541,11 @@ export function useChatStore() {
       console.warn("[CONSOLIDATION] portrait update failed", e);
     }
 
+    // Паттерны — после консолидации, когда память максимально свежая
+    setTimeout(() => {
+      runPatternDetectorRef.current?.(config);
+    }, 2000);
+
     const conflictNote = conflicts > 0 ? `, конфликтов: ${conflicts}` : "";
     return `${result.summary} (операций: ${applied}${conflictNote})`;
   }, [config, facts]);
@@ -699,20 +705,44 @@ Rules:
     }
   }, [config]);
 
-  // ── Pattern Detector: фоновый анализ повторяющихся тем ────────
+  // ── Pattern Detector: анализ дистиллированной памяти ─────────
+  // Источник: факты + эпизоды + резюме (= вся история, уже сжатая)
+  // Триггер: вызывается после консолидации/портрета, не чаще раза в день
   const runPatternDetector = useCallback(async (cfg = config) => {
     if (!cfg.apiKey || !cfg.baseUrl) return;
+
+    // Не чаще раза в день
     try {
-      // Берём последние 20 сообщений пользователя для анализа паттернов
-      const allUserMsgs = sessions
-        .flatMap((s) => s.messages)
-        .filter((m) => m.role === "user")
-        .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-        .slice(0, 20)
-        .map((m) => m.content)
+      const lastRun = localStorage.getItem("patternDetectorLastRun");
+      if (lastRun && Date.now() - parseInt(lastRun) < 86400000) {
+        console.log("[PATTERN] skipped — ran less than 24h ago");
+        return;
+      }
+    } catch { /* ignore */ }
+
+    try {
+      // Вход: факты + эпизоды + резюме — вся дистиллированная память
+      const factLines = facts
+        .filter((f) => f.status === "active")
+        .map((f) => `- [${f.category}${f.subcategory ? `/${f.subcategory}` : ""}] ${f.content}`)
         .join("\n");
 
-      if (!allUserMsgs.trim()) return;
+      const episodeLines = episodes
+        .map((e) => `- [${e.category}${e.happenedAt ? ` · ${e.happenedAt}` : ""}] ${e.title}: ${e.summary}`)
+        .join("\n");
+
+      const summaryLines = Object.entries(summaries)
+        .filter(([cat]) => cat !== "__portrait__")
+        .map(([cat, s]) => `${cat}: ${s}`)
+        .join("\n");
+
+      const input = [
+        summaryLines ? `РЕЗЮМЕ ПО РАЗДЕЛАМ:\n${summaryLines}` : "",
+        episodeLines ? `СОБЫТИЯ И ЭПИЗОДЫ:\n${episodeLines}` : "",
+        factLines ? `ВСЕ ФАКТЫ:\n${factLines}` : "",
+      ].filter(Boolean).join("\n\n");
+
+      if (!input.trim()) return;
 
       const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
         method: "POST",
@@ -720,10 +750,10 @@ Rules:
         body: JSON.stringify({
           model: cfg.model,
           temperature: 0.2,
-          max_tokens: 512,
+          max_tokens: 600,
           messages: [
             { role: "system", content: PATTERN_SYSTEM },
-            { role: "user", content: `Recent user messages:\n${allUserMsgs}` },
+            { role: "user", content: input },
           ],
         }),
       });
@@ -740,19 +770,19 @@ Rules:
       for (const p of result.patterns) {
         const saved = await api.patterns.upsert({ text: p.text, category: p.category, evidence: p.evidence });
         console.log(`[PATTERN] ${saved.updated ? "updated" : "new"} (count=${saved.count}): ${p.text}`);
-
-        // Проактивное уведомление если паттерн появился 3+ раз
-        if (saved.count >= 3) {
+        if (saved.count >= 2) {
           setProactiveNote(p.text);
         }
       }
 
       const fresh = await api.patterns.list().catch(() => []);
       setPatterns(fresh.map(apiPatternToPattern));
+
+      try { localStorage.setItem("patternDetectorLastRun", String(Date.now())); } catch { /* ignore */ }
     } catch (e) {
       console.warn("[PATTERN] failed", e);
     }
-  }, [config, sessions]);
+  }, [config, facts, episodes, summaries]);
 
   // ── Embedding для фактов (фоновый) ────────────────────────────
   const embedFactsBackground = useCallback(async (factIds: string[], factTexts: string[], cfg = config) => {
@@ -768,6 +798,7 @@ Rules:
   // Регистрируем refs — для forward-ссылок между функциями
   runPortraitRef.current = runPortrait;
   runConsolidationRef.current = runConsolidation;
+  runPatternDetectorRef.current = runPatternDetector;
 
   const runMemoryGate = useCallback(async (batch: Array<{ user: string; assistant: string }>, currentFacts: Fact[], cfg = config) => {
     console.log("[GATE] start batch", { count: batch.length, autoExtract: cfg.autoExtract, hasKey: !!cfg.apiKey, hasUrl: !!cfg.baseUrl });
@@ -1134,17 +1165,10 @@ Rules:
           setTimeout(() => {
             runEpisodeDetector(batch, activeSessionId, config);
           }, 3000);
-
-          // Паттерны: анализируем каждые 12 сообщений
-          if (nextCount % 12 === 0) {
-            setTimeout(() => {
-              runPatternDetector(config);
-            }, 6000);
-          }
         }
       }
     },
-    [activeSessionId, activeSession, config, facts, isThinking, runMemoryGate, gateMessageCount, runEpisodeDetector, runPatternDetector]
+    [activeSessionId, activeSession, config, facts, isThinking, runMemoryGate, gateMessageCount, runEpisodeDetector]
   );
 
   const clearFacts = useCallback(async () => {
