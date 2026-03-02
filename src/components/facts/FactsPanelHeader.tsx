@@ -7,11 +7,14 @@ interface FactsPanelHeaderProps {
   consolidating: boolean;
   summarizing: boolean;
   clearing: boolean;
+  portraying: boolean;
+  portrait: string;
   consolidateResult: string | null;
   onConsolidate?: () => void;
   onSummarize?: () => void;
   onClear?: () => void;
   onProfileCommand?: () => void;
+  onPortrait?: () => void;
   onAdd: (text: string, category: string) => void;
   existingCategories: string[];
 }
@@ -22,14 +25,18 @@ export default function FactsPanelHeader({
   consolidating,
   summarizing,
   clearing,
+  portraying,
+  portrait,
   consolidateResult,
   onConsolidate,
   onSummarize,
   onClear,
   onProfileCommand,
+  onPortrait,
   onAdd,
   existingCategories,
 }: FactsPanelHeaderProps) {
+  const [showPortrait, setShowPortrait] = useState(false);
   const [newFact, setNewFact] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [isAdding, setIsAdding] = useState(false);
@@ -86,6 +93,17 @@ export default function FactsPanelHeader({
               {summarizing ? "Резюмирую..." : "Резюме"}
             </button>
           )}
+          {onPortrait && factsCount > 0 && (
+            <button
+              onClick={() => { onPortrait(); setShowPortrait(true); }}
+              disabled={portraying || consolidating || summarizing}
+              title={portrait ? "Обновить портрет" : "Сгенерировать портрет пользователя"}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border hover:bg-secondary transition-colors disabled:opacity-40"
+            >
+              <Icon name={portraying ? "Loader" : "Contact"} size={13} />
+              {portraying ? "Генерирую..." : portrait ? "Обновить портрет" : "Портрет"}
+            </button>
+          )}
           <button
             onClick={() => setIsAdding(!isAdding)}
             className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors ${
@@ -108,6 +126,31 @@ export default function FactsPanelHeader({
           )}
         </div>
       </div>
+
+      {portrait && showPortrait && (
+        <div className="mt-3 px-3 py-3 border border-border bg-secondary text-xs text-foreground leading-relaxed animate-fade-in relative">
+          <button
+            onClick={() => setShowPortrait(false)}
+            className="absolute top-2 right-2 text-muted-foreground hover:text-foreground"
+          >
+            <Icon name="X" size={12} />
+          </button>
+          <div className="flex items-center gap-1.5 mb-2 text-muted-foreground font-medium uppercase tracking-wide text-[10px]">
+            <Icon name="Contact" size={11} />
+            Портрет
+          </div>
+          <p>{portrait}</p>
+        </div>
+      )}
+      {portrait && !showPortrait && (
+        <button
+          onClick={() => setShowPortrait(true)}
+          className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Icon name="Contact" size={11} />
+          Показать портрет
+        </button>
+      )}
 
       {consolidateResult && (
         <div className="mt-2 px-3 py-2 border border-border bg-secondary text-xs text-muted-foreground flex items-start gap-2 animate-fade-in">

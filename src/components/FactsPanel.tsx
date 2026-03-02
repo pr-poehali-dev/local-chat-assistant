@@ -9,12 +9,14 @@ interface FactsPanelProps {
   prevSummaries?: Record<string, string>;
   newFactIds?: Set<string>;
   updatedSummaryCategories?: Set<string>;
+  portrait?: string;
   onAdd: (content: string, category: string) => void;
   onDelete: (id: string) => void;
   onClear?: () => Promise<void>;
   onProfileCommand?: () => void;
   onConsolidate?: () => Promise<string>;
   onSummarize?: () => Promise<string>;
+  onPortrait?: () => Promise<string>;
   onSendMessage?: (text: string) => void;
   onMarkFactsSeen?: () => void;
   onMarkSummariesSeen?: () => void;
@@ -28,12 +30,14 @@ export default function FactsPanel({
   prevSummaries = {},
   newFactIds = new Set(),
   updatedSummaryCategories = new Set(),
+  portrait = "",
   onAdd,
   onDelete,
   onClear,
   onProfileCommand,
   onConsolidate,
   onSummarize,
+  onPortrait,
   onSendMessage,
   onMarkFactsSeen,
   apiKey = "",
@@ -41,6 +45,7 @@ export default function FactsPanel({
 }: FactsPanelProps) {
   const [consolidating, setConsolidating] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
+  const [portraying, setPortraying] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [consolidateResult, setConsolidateResult] = useState<string | null>(null);
   const [openCategories, setOpenCategories] = useState<Set<string>>(new Set());
@@ -91,6 +96,20 @@ export default function FactsPanel({
       setConsolidateResult("Ошибка резюмирования");
     } finally {
       setSummarizing(false);
+    }
+  };
+
+  const handlePortrait = async () => {
+    if (!onPortrait) return;
+    setPortraying(true);
+    setConsolidateResult(null);
+    try {
+      await onPortrait();
+      setConsolidateResult("Портрет обновлён");
+    } catch {
+      setConsolidateResult("Ошибка генерации портрета");
+    } finally {
+      setPortraying(false);
     }
   };
 
@@ -204,9 +223,12 @@ export default function FactsPanel({
         consolidating={consolidating}
         summarizing={summarizing}
         clearing={clearing}
+        portraying={portraying}
+        portrait={portrait}
         consolidateResult={consolidateResult}
         onConsolidate={onConsolidate ? handleConsolidate : undefined}
         onSummarize={onSummarize ? handleSummarize : undefined}
+        onPortrait={onPortrait ? handlePortrait : undefined}
         onClear={onClear ? handleClear : undefined}
         onProfileCommand={onProfileCommand}
         onAdd={onAdd}

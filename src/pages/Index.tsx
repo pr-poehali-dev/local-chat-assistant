@@ -49,6 +49,8 @@ export default function Index() {
     saveConfig,
     runConsolidation,
     runSummaries,
+    portrait,
+    runPortrait,
     newFactIds,
     clearNewFactIds,
     updatedSummaryCategories,
@@ -312,12 +314,14 @@ export default function Index() {
                   prevSummaries={prevSummaries}
                   newFactIds={newFactIds}
                   updatedSummaryCategories={updatedSummaryCategories}
+                  portrait={portrait}
                   onAdd={addFact}
                   onDelete={deleteFact}
                   onClear={clearFacts}
                   onProfileCommand={handleProfileCommand}
                   onConsolidate={runConsolidation}
                   onSummarize={runSummaries}
+                  onPortrait={runPortrait}
                   onSendMessage={(text) => { sendMessage(text); setActiveTab("chat"); }}
                   onMarkFactsSeen={clearNewFactIds}
                   onMarkSummariesSeen={clearUpdatedSummaries}

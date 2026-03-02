@@ -101,6 +101,71 @@ Rules:
 - subcategory: 1-3 words (e.g. "Семья", "Возраст", "Локация")
 - confidence 0..1 — skip if < 0.6`;
 
+// Карта контекстных окон моделей (в токенах)
+const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  "gpt-4o": 128000,
+  "gpt-4o-mini": 128000,
+  "gpt-4-turbo": 128000,
+  "gpt-4": 8192,
+  "gpt-3.5-turbo": 16385,
+  "claude-3-5-sonnet": 200000,
+  "claude-3-5-haiku": 200000,
+  "claude-3-opus": 200000,
+  "claude-3-sonnet": 200000,
+  "claude-3-haiku": 200000,
+  "llama-3.1-70b": 128000,
+  "llama-3.1-8b": 128000,
+  "gemini-1.5-pro": 1000000,
+  "gemini-1.5-flash": 1000000,
+};
+
+// Грубая оценка токенов (символы / 3.5)
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3.5);
+}
+
+function getModelContextLimit(model: string): number {
+  const key = Object.keys(MODEL_CONTEXT_LIMITS).find((k) => model.toLowerCase().includes(k));
+  return key ? MODEL_CONTEXT_LIMITS[key] : 32000;
+}
+
+// Умная обрезка истории с учётом бюджета токенов
+function trimHistory(
+  messages: Message[],
+  systemTokens: number,
+  maxTokens: number,
+  contextLimit: number
+): Array<{ role: string; content: string }> {
+  // Резервируем токены: системный промпт + ответ модели + буфер 10%
+  const budget = contextLimit - systemTokens - maxTokens - Math.ceil(contextLimit * 0.1);
+  if (budget <= 0) return [];
+
+  const all = messages.map((m) => ({ role: m.role, content: m.content }));
+  let used = 0;
+  const result: Array<{ role: string; content: string }> = [];
+
+  // Берём с конца — самые свежие реплики приоритетны
+  for (let i = all.length - 1; i >= 0; i--) {
+    const t = estimateTokens(all[i].content);
+    if (used + t > budget) break;
+    used += t;
+    result.unshift(all[i]);
+  }
+  return result;
+}
+
+const PORTRAIT_SYSTEM = `You are building a personal portrait of a person for their AI assistant.
+You receive all known facts and category summaries about them.
+Write a single cohesive narrative paragraph (3-7 sentences) in Russian that captures WHO this person is:
+their name, age, location, what they do, key goals, key challenges, important personal context.
+
+Rules:
+- Write as if the assistant already knows this person well — warm, matter-of-fact tone
+- Include specific details: numbers, names, places — they matter
+- Do NOT use bullet points or headers — flowing prose only
+- Do NOT start with "Это..." or "Пользователь..." — start with their name or role
+- Maximum 120 words`;
+
 const DEFAULT_CONFIG: LLMConfig = {
   baseUrl: "https://api.openai.com/v1",
   apiKey: "",
@@ -170,6 +235,7 @@ export function useChatStore() {
   const [facts, setFacts] = useState<Fact[]>([]);
   const [gateMessageCount, setGateMessageCount] = useState(0);
   const gateBatchRef = React.useRef<Array<{ user: string; assistant: string }>>([]);
+  const [portrait, setPortrait] = useState<string>("");
   const loadLocalVoicePrefs = (): Partial<LLMConfig> => {
     try {
       return {
@@ -228,7 +294,13 @@ export function useChatStore() {
         setFacts(apiFacts.map(apiFactToFact));
         setConfig(apiSettingsToConfig(apiSettings));
         const summaryMap: Record<string, string> = {};
-        for (const s of apiSummaries) summaryMap[s.category] = s.summary;
+        for (const s of apiSummaries) {
+          if (s.category === "__portrait__") {
+            setPortrait(s.summary);
+          } else {
+            summaryMap[s.category] = s.summary;
+          }
+        }
         setSummaries(summaryMap);
       } catch (_) {
         setAppError("Не удалось подключиться к серверу");
@@ -411,6 +483,42 @@ Rules:
     return `Обновлено резюме для ${updated} ${updated === 1 ? "категории" : updated < 5 ? "категорий" : "категорий"}`;
   }, [config, facts]);
 
+  const runPortrait = useCallback(async (): Promise<string> => {
+    if (!config.apiKey || !config.baseUrl) return "LLM не подключён";
+    if (facts.length === 0) return "Нет фактов для портрета";
+
+    const factLines = facts.map((f) => `- [${f.category}${f.subcategory ? ` / ${f.subcategory}` : ""}] ${f.content}`).join("\n");
+    const summaryLines = Object.entries(summaries)
+      .filter(([, s]) => s)
+      .map(([cat, s]) => `### ${cat}\n${s}`)
+      .join("\n\n");
+
+    const input = `${summaryLines ? `РЕЗЮМЕ ПО РАЗДЕЛАМ:\n${summaryLines}\n\n` : ""}ВСЕ ФАКТЫ:\n${factLines}`;
+
+    const res = await fetch(`${config.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: 0.3,
+        max_tokens: 400,
+        messages: [
+          { role: "system", content: PORTRAIT_SYSTEM },
+          { role: "user", content: input },
+        ],
+      }),
+    });
+
+    if (!res.ok) throw new Error(`LLM error ${res.status}`);
+    const data = await res.json();
+    const text: string = data?.choices?.[0]?.message?.content?.trim() ?? "";
+    if (!text) throw new Error("Пустой ответ");
+
+    await api.summaries.save("__portrait__", text, facts.length).catch(() => null);
+    setPortrait(text);
+    return text;
+  }, [config, facts, summaries]);
+
   const runMemoryGate = useCallback(async (batch: Array<{ user: string; assistant: string }>, currentFacts: Fact[], cfg = config) => {
     console.log("[GATE] start batch", { count: batch.length, autoExtract: cfg.autoExtract, hasKey: !!cfg.apiKey, hasUrl: !!cfg.baseUrl });
     if (!cfg.autoExtract || !cfg.apiKey || !cfg.baseUrl || batch.length === 0) return;
@@ -560,50 +668,52 @@ Rules:
           "⚠️ LLM не подключён. Откройте «Настройки», введите Base URL и API-ключ, нажмите «Сохранить».";
       } else {
         try {
-          // Если фактов мало (≤50) — берём все. Иначе — релевантные по запросу.
-          let relevantFacts = facts;
-          if (facts.length > 50) {
-            try {
-              const fetched = await api.facts.relevant(text, 10);
-              if (fetched.length > 0) {
-                relevantFacts = fetched.map((f) => ({
-                  id: f.id,
-                  content: f.text,
-                  category: f.category,
-                  subcategory: f.subcategory ?? undefined,
-                  addedAt: "",
-                  source: f.source,
-                }));
-              }
-            } catch {
-              // fallback: все факты
+          const currentMsgs = (activeSession?.messages ?? []).filter((m) => m.id !== tempId);
+          const contextLimit = getModelContextLimit(config.model);
+
+          // ── Слой 1: Портрет (всегда, ~400 токенов) ──
+          const portraitBlock = portrait
+            ? `\n\n════════════════════════════════\nКТО ЭТОТ ЧЕЛОВЕК (твоя долгосрочная память):\n${portrait}\n════════════════════════════════`
+            : "";
+
+          // ── Слой 2: Резюме + факты — только если история короткая ──
+          // Когда сессия молодая (≤6 реплик), история ещё не содержит контекст — подкидываем детали
+          // Когда сессия длинная — LLM уже видела всё это в истории, экономим токены
+          const isShortSession = currentMsgs.length <= 6;
+          let detailBlock = "";
+
+          if (isShortSession) {
+            const summaryLines = Object.entries(summaries)
+              .filter(([, s]) => s)
+              .map(([cat, s]) => `### ${cat}\n${s}`)
+              .join("\n\n");
+
+            let factLines = "";
+            if (facts.length > 0 && facts.length <= 60) {
+              factLines = facts.map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.content}`).join("\n");
+            } else if (facts.length > 60) {
+              try {
+                const fetched = await api.facts.relevant(text, 15);
+                if (fetched.length > 0) {
+                  factLines = fetched.map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.text}`).join("\n");
+                }
+              } catch { /* fallback — без деталей */ }
+            }
+
+            if (summaryLines || factLines) {
+              detailBlock = `\n\n${summaryLines ? `📋 РАЗДЕЛЫ:\n${summaryLines}` : ""}${factLines ? `\n\n📌 ДЕТАЛИ:\n${factLines}` : ""}`;
             }
           }
 
-          // Конспекты категорий — общая картина
-          const summaryLines = Object.entries(summaries)
-            .filter(([, s]) => s)
-            .map(([cat, s]) => `### ${cat}\n${s}`)
-            .join("\n\n");
+          const systemContent = config.systemPrompt + portraitBlock + detailBlock;
 
-          // Релевантные факты — детали
-          const factLines = relevantFacts.length > 0
-            ? relevantFacts.map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.content}`).join("\n")
-            : "";
-
-          const factContext = summaryLines || factLines
-            ? `\n\n════════════════════════════════
-ДОЛГОСРОЧНАЯ ПАМЯТЬ (твои собственные знания о владельце):
-Это не справочник — это то, что ты уже знаешь. Используй эти данные как само собой разумеющееся. Не переспрашивай то, что здесь есть. Обращайся по имени если оно известно.
-${summaryLines ? `\n📋 СВОДКА ПО РАЗДЕЛАМ:\n${summaryLines}` : ""}${factLines ? `\n\n📌 ДЕТАЛИ:\n${factLines}` : ""}
-════════════════════════════════`
-            : "";
-
-          const currentMsgs = activeSession?.messages ?? [];
-          const history = currentMsgs
-            .filter((m) => m.id !== tempId)
-            .slice(-10)
-            .map((m) => ({ role: m.role, content: m.content }));
+          // ── История с умной обрезкой по токенам ──
+          const history = trimHistory(
+            currentMsgs,
+            estimateTokens(systemContent),
+            config.maxTokens,
+            contextLimit
+          );
 
           const res = await fetch(`${config.baseUrl}/chat/completions`, {
             method: "POST",
@@ -616,7 +726,7 @@ ${summaryLines ? `\n📋 СВОДКА ПО РАЗДЕЛАМ:\n${summaryLines}` :
               temperature: config.temperature,
               max_tokens: config.maxTokens,
               messages: [
-                { role: "system", content: config.systemPrompt + factContext },
+                { role: "system", content: systemContent },
                 ...history,
                 { role: "user", content: text },
               ],
@@ -758,6 +868,8 @@ ${summaryLines ? `\n📋 СВОДКА ПО РАЗДЕЛАМ:\n${summaryLines}` :
     saveConfig,
     runConsolidation,
     runSummaries,
+    portrait,
+    runPortrait,
     newFactIds,
     clearNewFactIds: () => setNewFactIds(new Set()),
     updatedSummaryCategories,
