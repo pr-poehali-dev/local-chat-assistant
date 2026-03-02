@@ -749,20 +749,25 @@ Rules:
             ? `\n\n[О пользователе: ${portraitCompact}]`
             : "";
 
-          // Слой 2: умная инъекция резюме
-          // Anchor-категории — всегда в промпте (ключевой бизнес-контекст)
-          const ANCHOR_CATS = new Set(["О компании", "Цели", "Цели/проблемы", "Личные проекты"]);
-          // Прочие категории — только если запрос касается их (keyword-match по тексту вопроса)
+          // Слой 2: RAG по тексту резюме — топ-3 по keyword-overlap с запросом
+          // Матчим запрос против содержимого резюме, а не названия категории.
+          // Это работает для любой сферы жизни: "как Маша?" → резюме Семьи содержит "Маша"
           const queryLower = text.toLowerCase();
-          const summaryLines = Object.entries(summaries)
-            .filter(([cat, s]) => {
-              if (!s || cat === "__portrait__") return false;
-              if (ANCHOR_CATS.has(cat)) return true;
-              // RAG по резюме: включаем если хотя бы 1 слово из названия категории есть в запросе
-              const catWords = cat.toLowerCase().split(/[\s/]+/);
-              return catWords.some((w) => w.length >= 4 && queryLower.includes(w));
+          const queryWords = queryLower.replace(/[^\wа-яё\s]/gi, " ").split(/\s+/).filter((w) => w.length >= 3);
+
+          const scoredSummaries = Object.entries(summaries)
+            .filter(([cat, s]) => s && cat !== "__portrait__")
+            .map(([cat, s]) => {
+              const bodyLower = s.toLowerCase();
+              const hits = queryWords.filter((w) => bodyLower.includes(w)).length;
+              return { cat, s, hits };
             })
-            .map(([cat, s]) => `${cat}: ${s}`)
+            .filter(({ hits }) => hits > 0)
+            .sort((a, b) => b.hits - a.hits)
+            .slice(0, 3);
+
+          const summaryLines = scoredSummaries
+            .map(({ cat, s }) => `${cat}: ${s}`)
             .join("\n");
           const summaryBlock = summaryLines
             ? `\n\n[Контекст по разделам:\n${summaryLines}]`
