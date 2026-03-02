@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { api } from "@/lib/api";
 import type { ApiSession, ApiMessage, ApiFact, ApiSettings, ApiProfile } from "@/lib/api";
 
@@ -72,7 +72,8 @@ Rules:
 - If nothing to improve → return {"operations":[], "summary":"All facts look good"}`;
 
 const MEMORY_GATE_SYSTEM = `You are a knowledge base builder for a personal AI assistant.
-Extract facts from the conversation and return ONLY valid JSON (no markdown):
+You receive a batch of recent conversation exchanges (multiple user/assistant turns).
+Extract ALL facts found across the entire batch and return ONLY valid JSON (no markdown):
 {"should_write":false,"reason":"...","facts":[]}
 
 Each fact object MUST use this exact structure:
@@ -167,6 +168,8 @@ export function useChatStore() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   const [facts, setFacts] = useState<Fact[]>([]);
+  const [gateMessageCount, setGateMessageCount] = useState(0);
+  const gateBatchRef = React.useRef<Array<{ user: string; assistant: string }>>([]);
   const loadLocalVoicePrefs = (): Partial<LLMConfig> => {
     try {
       return {
@@ -408,15 +411,16 @@ Rules:
     return `Обновлено резюме для ${updated} ${updated === 1 ? "категории" : updated < 5 ? "категорий" : "категорий"}`;
   }, [config, facts]);
 
-  const runMemoryGate = useCallback(async (userMsg: string, assistantMsg: string, currentFacts: Fact[], cfg = config) => {
-    console.log("[GATE] start", { autoExtract: cfg.autoExtract, hasKey: !!cfg.apiKey, hasUrl: !!cfg.baseUrl });
-    if (!cfg.autoExtract || !cfg.apiKey || !cfg.baseUrl) return;
+  const runMemoryGate = useCallback(async (batch: Array<{ user: string; assistant: string }>, currentFacts: Fact[], cfg = config) => {
+    console.log("[GATE] start batch", { count: batch.length, autoExtract: cfg.autoExtract, hasKey: !!cfg.apiKey, hasUrl: !!cfg.baseUrl });
+    if (!cfg.autoExtract || !cfg.apiKey || !cfg.baseUrl || batch.length === 0) return;
     try {
       const existingSample = currentFacts.slice(0, 8)
         .map((f) => `- [${f.category}] ${f.content}`)
         .join("\n") || "none";
 
-      const userContent = `USER: ${userMsg}\n\nASSISTANT: ${assistantMsg}\n\nEXISTING FACTS (do not duplicate):\n${existingSample}`;
+      const batchText = batch.map((p, i) => `--- Exchange ${i + 1} ---\nUSER: ${p.user}\nASSISTANT: ${p.assistant}`).join("\n\n");
+      const userContent = `${batchText}\n\nEXISTING FACTS (do not duplicate):\n${existingSample}`;
 
       const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
         method: "POST",
@@ -668,13 +672,19 @@ ${summaryLines ? `\n📋 СВОДКА ПО РАЗДЕЛАМ:\n${summaryLines}` :
       );
       setIsThinking(false);
 
-      // Memory Gate — фоново, не блокирует UI
-      console.log("[SEND] assistantContent ok?", !!assistantContent, assistantContent?.slice(0, 30));
+      // Memory Gate — батчинг: накапливаем пары, запускаем каждые 4 сообщения
       if (assistantContent && !assistantContent.startsWith("⚠️") && !assistantContent.startsWith("Ошибка")) {
-        runMemoryGate(text, assistantContent, facts, config);
+        gateBatchRef.current.push({ user: text, assistant: assistantContent });
+        const nextCount = gateMessageCount + 1;
+        setGateMessageCount(nextCount);
+        if (nextCount % 4 === 0) {
+          const batch = [...gateBatchRef.current];
+          gateBatchRef.current = [];
+          runMemoryGate(batch, facts, config);
+        }
       }
     },
-    [activeSessionId, activeSession, config, facts, isThinking, runMemoryGate]
+    [activeSessionId, activeSession, config, facts, isThinking, runMemoryGate, gateMessageCount]
   );
 
   const clearFacts = useCallback(async () => {
