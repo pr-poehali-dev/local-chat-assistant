@@ -178,7 +178,10 @@ async function transcribeAudio(blob: Blob, baseUrl: string, apiKey: string): Pro
 
   const data = await res.json();
   const text: string = data.text ?? "";
-  return isWhisperHallucination(text) ? "" : text;
+  console.log("[Whisper raw]", JSON.stringify(text));
+  const isHallu = isWhisperHallucination(text);
+  console.log("[Whisper hallucination?]", isHallu);
+  return isHallu ? "" : text;
 }
 
 // Известные галлюцинации Whisper на тишине / коротком аудио
