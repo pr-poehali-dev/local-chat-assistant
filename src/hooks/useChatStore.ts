@@ -124,6 +124,12 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5);
 }
 
+// Сжатый однострочный портрет из полного текста (первые 2 предложения)
+function compactPortrait(text: string): string {
+  const sentences = text.match(/[^.!?]+[.!?]+/g) ?? [text];
+  return sentences.slice(0, 2).join(" ").trim();
+}
+
 function getModelContextLimit(model: string): number {
   const key = Object.keys(MODEL_CONTEXT_LIMITS).find((k) => model.toLowerCase().includes(k));
   return key ? MODEL_CONTEXT_LIMITS[key] : 32000;
@@ -671,54 +677,74 @@ Rules:
           const currentMsgs = (activeSession?.messages ?? []).filter((m) => m.id !== tempId);
           const contextLimit = getModelContextLimit(config.model);
 
-          // ── Определяем нужен ли контекст памяти ──
-          // Сначала считаем историю без контекста
-          const historyRaw = trimHistory(currentMsgs, estimateTokens(config.systemPrompt), config.maxTokens, contextLimit);
-          // История "обрезана" если мы потеряли начало сессии
-          const historyIsTrimmed = historyRaw.length < currentMsgs.length;
-          // Первое сообщение сессии — LLM ещё ничего не знает
+          // ── Стратегия памяти ──────────────────────────────────────────────
+          //
+          // ПОРТРЕТ (compact, ~100 токенов) — ВСЕГДА в системном промпте.
+          // Это "кто передо мной" — цена мизерная, ценность огромная.
+          //
+          // РЕЗЮМЕ + ФАКТЫ — только при первом сообщении сессии ИЛИ
+          // когда история начала обрезаться (LLM реально забыла).
+          // В остальных случаях LLM видит их из истории первого запроса.
+          //
+          // Итог: минимум токенов, максимум понимания.
+          // ─────────────────────────────────────────────────────────────────
+
           const isFirstMessage = currentMsgs.length === 0;
 
-          // Память нужна когда: начало сессии ИЛИ история обрезалась (LLM забыла)
-          const needsMemory = isFirstMessage || historyIsTrimmed;
+          // Сначала строим историю без тяжёлой памяти
+          const historyRaw = trimHistory(
+            currentMsgs,
+            estimateTokens(config.systemPrompt),
+            config.maxTokens,
+            contextLimit
+          );
+          const historyIsTrimmed = historyRaw.length < currentMsgs.length;
+          const needsFullMemory = isFirstMessage || historyIsTrimmed;
 
-          let memoryBlock = "";
-          if (needsMemory) {
-            const portraitPart = portrait
-              ? `КТО ЭТОТ ЧЕЛОВЕК:\n${portrait}`
-              : "";
+          // Портрет — всегда, но компактно (первые 2 предложения)
+          const portraitCompact = portrait ? compactPortrait(portrait) : "";
+          const portraitBlock = portraitCompact
+            ? `\n\n[О пользователе: ${portraitCompact}]`
+            : "";
 
+          // Резюме + факты — только когда нужно
+          let detailBlock = "";
+          if (needsFullMemory && (Object.keys(summaries).length > 0 || facts.length > 0)) {
             const summaryLines = Object.entries(summaries)
               .filter(([, s]) => s)
               .map(([cat, s]) => `${cat}: ${s}`)
-              .join("\n\n");
+              .join("\n");
 
             let factLines = "";
             if (facts.length > 0 && facts.length <= 60) {
               factLines = facts
-                .map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.content}`)
+                .map((f) => `- [${f.subcategory ? `${f.category}/${f.subcategory}` : f.category}] ${f.content}`)
                 .join("\n");
             } else if (facts.length > 60) {
               try {
                 const fetched = await api.facts.relevant(text, 15);
                 if (fetched.length > 0) {
                   factLines = fetched
-                    .map((f) => `- [${f.subcategory ? `${f.category} / ${f.subcategory}` : f.category}] ${f.text}`)
+                    .map((f) => `- [${f.subcategory ? `${f.category}/${f.subcategory}` : f.category}] ${f.text}`)
                     .join("\n");
                 }
               } catch { /* без деталей */ }
             }
 
-            const parts = [portraitPart, summaryLines ? `РАЗДЕЛЫ:\n${summaryLines}` : "", factLines ? `ДЕТАЛИ:\n${factLines}` : ""].filter(Boolean);
+            const parts = [
+              summaryLines ? `РАЗДЕЛЫ:\n${summaryLines}` : "",
+              factLines ? `ФАКТЫ:\n${factLines}` : "",
+            ].filter(Boolean);
+
             if (parts.length > 0) {
-              memoryBlock = `\n\n════ ДОЛГОСРОЧНАЯ ПАМЯТЬ ════\n${parts.join("\n\n")}\n════════════════════════════`;
+              detailBlock = `\n\n════ ПАМЯТЬ ════\n${parts.join("\n\n")}\n════════════════`;
             }
           }
 
-          const systemContent = config.systemPrompt + memoryBlock;
+          const systemContent = config.systemPrompt + portraitBlock + detailBlock;
 
-          // ── История: пересчитываем с учётом финального системного промпта ──
-          const history = needsMemory
+          // История: если добавили тяжёлую память — пересчитываем с учётом её веса
+          const history = needsFullMemory
             ? trimHistory(currentMsgs, estimateTokens(systemContent), config.maxTokens, contextLimit)
             : historyRaw;
 
