@@ -174,6 +174,10 @@ def route(event: dict) -> dict:
             return facts_update(rid, body)
         if a == "reindex":
             return facts_reindex()
+        if a == "conflicts":
+            return facts_conflicts()
+        if a == "resolve_conflict":
+            return facts_resolve_conflict(rid, body)
         if a == "clear":
             return facts_clear()
         if a == "delete" or (not a and method == "DELETE"):
@@ -453,9 +457,9 @@ def _memory_gate(session_id: str, user_msg: str, assistant_msg: str) -> None:
             fid = str(uuid.uuid4())
             with con.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO facts (id, text, category, subcategory, source, created_at, updated_at) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    (fid, text, category, subcategory, "memory_gate", ts, ts),
+                    "INSERT INTO facts (id, text, category, subcategory, source, confidence, status, created_at, updated_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (fid, text, category, subcategory, "memory_gate", confidence, "active", ts, ts),
                 )
             con.commit()
             existing.setdefault(category, set()).add(norm)
@@ -480,12 +484,14 @@ def _memory_gate(session_id: str, user_msg: str, assistant_msg: str) -> None:
 def facts_list(qs: dict) -> dict:
     category = qs.get("category", "")
     q = qs.get("q", "")
-    # Без лимита по умолчанию — грузим все факты
-    # limit=N в запросе позволяет явно ограничить (например для контекста LLM)
+    # include_review=1 — показывать конфликты для UI; без него — только active
+    include_review = qs.get("include_review", "0") == "1"
     raw_limit = qs.get("limit", "")
     limit = int(raw_limit) if raw_limit.isdigit() else None
 
     conditions, params = [], []
+    if not include_review:
+        conditions.append("status = 'active'")
     if category and category != "Все":
         conditions.append("category = %s")
         params.append(category)
@@ -503,7 +509,7 @@ def facts_list(qs: dict) -> dict:
     try:
         with con.cursor() as cur:
             cur.execute(
-                f"SELECT id, text, category, subcategory, source, created_at, updated_at "
+                f"SELECT id, text, category, subcategory, source, confidence, status, created_at, updated_at "
                 f"FROM facts {where} ORDER BY created_at DESC{limit_clause}",
                 params,
             )
@@ -557,8 +563,8 @@ def facts_relevant(qs: dict) -> dict:
             # 1. Поиск через GIN-индекс по keywords (быстро, масштабируется)
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, text, category, subcategory, keywords, source, created_at "
-                    "FROM facts WHERE keywords && %s::text[] "
+                    "SELECT id, text, category, subcategory, keywords, source, confidence, status, created_at "
+                    "FROM facts WHERE status = 'active' AND keywords && %s::text[] "
                     "ORDER BY updated_at DESC LIMIT 100",
                     (kw_array,),
                 )
@@ -570,8 +576,8 @@ def facts_relevant(qs: dict) -> dict:
                 params = [f"%{w}%" for w in words]
                 with con.cursor() as cur:
                     cur.execute(
-                        f"SELECT id, text, category, subcategory, keywords, source, created_at "
-                        f"FROM facts WHERE {conditions} ORDER BY updated_at DESC LIMIT 100",
+                        f"SELECT id, text, category, subcategory, keywords, source, confidence, status, created_at "
+                        f"FROM facts WHERE status = 'active' AND ({conditions}) ORDER BY updated_at DESC LIMIT 100",
                         params,
                     )
                     rows = rows_to_list(cur)
@@ -591,8 +597,8 @@ def facts_relevant(qs: dict) -> dict:
         if not rows:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, text, category, subcategory, keywords, source, created_at "
-                    "FROM facts ORDER BY updated_at DESC LIMIT %s",
+                    "SELECT id, text, category, subcategory, keywords, source, confidence, status, created_at "
+                    "FROM facts WHERE status = 'active' ORDER BY updated_at DESC LIMIT %s",
                     (limit,),
                 )
                 rows = rows_to_list(cur)
@@ -650,6 +656,10 @@ def facts_create(body: dict) -> dict:
         return err("text is required")
     category = body.get("category", "Другое")
     source = body.get("source", "manual")
+    confidence = float(body.get("confidence", 1.0))
+    status = body.get("status", "active")
+    if status not in ("active", "needs_review", "archived"):
+        status = "active"
     raw_sub = (body.get("subcategory") or "").strip()
     subcategory = re.sub(r"\s+", " ", raw_sub)[:32].title() if raw_sub else None
     # keywords = переданные явно ИЛИ извлечённые из текста
@@ -670,13 +680,14 @@ def facts_create(body: dict) -> dict:
     try:
         with con.cursor() as cur:
             cur.execute(
-                "INSERT INTO facts (id, text, category, subcategory, keywords, source, created_at, updated_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (fid, text, category, subcategory, keywords, source, ts, ts),
+                "INSERT INTO facts (id, text, category, subcategory, keywords, source, confidence, status, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (fid, text, category, subcategory, keywords, source, confidence, status, ts, ts),
             )
         con.commit()
         return ok({"id": fid, "text": text, "category": category, "subcategory": subcategory,
-                   "keywords": keywords, "source": source, "created_at": ts, "updated_at": ts}, 201)
+                   "keywords": keywords, "source": source, "confidence": confidence, "status": status,
+                   "created_at": ts, "updated_at": ts}, 201)
     finally:
         con.close()
 
@@ -689,6 +700,8 @@ def facts_update(fid: str, body: dict) -> dict:
     new_cat = body.get("category") if "category" in body else None
     new_sub_raw = body.get("subcategory", "").strip() if "subcategory" in body else None
     new_sub = re.sub(r"\s+", " ", new_sub_raw)[:32].title() if new_sub_raw else None
+    new_status = body.get("status") if "status" in body else None
+    new_confidence = body.get("confidence") if "confidence" in body else None
 
     if new_text:
         fields.append("text = %s"); params.append(new_text)
@@ -696,6 +709,10 @@ def facts_update(fid: str, body: dict) -> dict:
         fields.append("category = %s"); params.append(new_cat)
     if "subcategory" in body:
         fields.append("subcategory = %s"); params.append(new_sub)
+    if new_status and new_status in ("active", "needs_review", "archived"):
+        fields.append("status = %s"); params.append(new_status)
+    if new_confidence is not None:
+        fields.append("confidence = %s"); params.append(float(new_confidence))
 
     # Пересчитываем keywords если изменился текст, категория или подкатегория
     if new_text or new_cat or "subcategory" in body:
@@ -742,6 +759,43 @@ def facts_delete(fid: str) -> dict:
             cur.execute("DELETE FROM facts WHERE id = %s", (fid,))
         con.commit()
         return ok({"deleted": fid})
+    finally:
+        con.close()
+
+
+def facts_conflicts() -> dict:
+    """Возвращает факты со статусом needs_review (конфликты, выявленные консолидацией)."""
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "SELECT id, text, category, subcategory, source, confidence, status, created_at, updated_at "
+                "FROM facts WHERE status = 'needs_review' ORDER BY updated_at DESC"
+            )
+            rows = rows_to_list(cur)
+        con.commit()
+        return ok(rows)
+    finally:
+        con.close()
+
+
+def facts_resolve_conflict(fid: str, body: dict) -> dict:
+    """Разрешает конфликт: action='keep' → active, action='discard' → archived."""
+    if not fid:
+        return err("id required")
+    action = body.get("action", "keep")
+    new_status = "active" if action == "keep" else "archived"
+    con = get_db()
+    try:
+        with con.cursor() as cur:
+            cur.execute(
+                "UPDATE facts SET status = %s, updated_at = %s WHERE id = %s",
+                (new_status, now_iso(), fid),
+            )
+            if cur.rowcount == 0:
+                return err("fact not found", 404)
+        con.commit()
+        return ok({"id": fid, "status": new_status})
     finally:
         con.close()
 

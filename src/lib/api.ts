@@ -46,6 +46,8 @@ export interface ApiFact {
   category: string;
   subcategory?: string | null;
   source: "manual" | "auto" | "memory_gate";
+  confidence?: number;
+  status?: "active" | "needs_review" | "archived";
   created_at: string;
   updated_at?: string;
 }
@@ -106,11 +108,12 @@ export const api = {
   },
 
   facts: {
-    list: (params?: { category?: string; q?: string; limit?: number }) => {
+    list: (params?: { category?: string; q?: string; limit?: number; include_review?: boolean }) => {
       const qs: Record<string, string> = {};
       if (params?.category && params.category !== "Все") qs.category = params.category;
       if (params?.q) qs.q = params.q;
       if (params?.limit) qs.limit = String(params.limit);
+      if (params?.include_review) qs.include_review = "1";
       return request<ApiFact[]>("facts", "list", { qs });
     },
     create: (text: string, category: string, source: "manual" | "auto" = "manual", subcategory?: string) =>
@@ -124,8 +127,16 @@ export const api = {
       request<ApiFact[]>("facts", "relevant", { qs: { q, limit: String(limit) } }),
     profile: (limitPerSection = 5) =>
       request<ApiProfile>("facts", "profile", { qs: { limit_per_section: String(limitPerSection) } }),
-    update: (id: string, data: { text?: string; category?: string; subcategory?: string }) =>
+    update: (id: string, data: { text?: string; category?: string; subcategory?: string; status?: string; confidence?: number }) =>
       request<{ updated: string }>("facts", "update", { method: "POST", id, body: JSON.stringify(data) }),
+    conflicts: () =>
+      request<ApiFact[]>("facts", "conflicts"),
+    resolveConflict: (id: string, action: "keep" | "discard") =>
+      request<{ id: string; status: string }>("facts", "resolve_conflict", {
+        method: "POST",
+        id,
+        body: JSON.stringify({ action }),
+      }),
     clear: () =>
       request<{ cleared: number }>("facts", "clear", { method: "POST" }),
   },

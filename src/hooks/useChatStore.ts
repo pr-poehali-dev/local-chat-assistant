@@ -24,6 +24,8 @@ export interface Fact {
   subcategory?: string;
   addedAt: string;
   source: "manual" | "auto" | "memory_gate";
+  confidence?: number;
+  status?: "active" | "needs_review" | "archived";
 }
 
 export interface LLMConfig {
@@ -42,20 +44,23 @@ export interface LLMConfig {
 }
 
 const CONSOLIDATION_SYSTEM = `You are a memory curator for a personal AI assistant.
-You receive all facts stored about the user. Your job: restructure, deduplicate, and improve them.
+You receive all facts stored about the user. Your job: restructure, deduplicate, improve, and flag conflicts.
 
 Return ONLY valid JSON (no markdown):
 {
   "operations": [
     {"op": "update", "id": "...", "category": "...", "subcategory": "...", "text": "..."},
     {"op": "delete", "id": "..."},
-    {"op": "merge", "keep_id": "...", "delete_ids": ["..."], "text": "..."}
+    {"op": "merge", "keep_id": "...", "delete_ids": ["..."], "text": "..."},
+    {"op": "conflict", "ids": ["...", "..."], "reason": "one sentence explaining the contradiction"}
   ],
   "summary": "brief description of what was done"
 }
 
 Rules:
 - Merge near-duplicate facts (same meaning, different wording) → keep best phrasing
+- CONFLICT DETECTION: if two facts directly contradict each other (different values for the same attribute, e.g. revenue 40M vs 25M, different city, conflicting dates) → use op "conflict" with both IDs and a short reason. Do NOT delete or merge conflicting facts — flag them for human review.
+- Only delete facts that are clearly trivial, redundant after a merge, or obviously superseded (e.g. old goal already achieved).
 - Split overcrowded subcategories if needed, create new descriptive ones
 - ALWAYS fix wrong category and subcategory assignments — this is critical:
   * Personal identity (name, surname, age, family, location) → category "Личное", subcategory "Имя и фамилия" / "Семья" / "Локация" / "Возраст"
@@ -66,7 +71,6 @@ Rules:
   * Market/competitors/clients → category "Рынок"
 - You MAY create NEW categories if none of the existing ones fit — choose a clear Russian name
 - Do NOT force-assign everything to "Другое" — use specific meaningful categories
-- Delete facts that are clearly outdated, trivial or contradicted by better facts
 - Keep atomic facts (one fact = one sentence)
 - Preserve all IDs exactly as given
 - If nothing to improve → return {"operations":[], "summary":"All facts look good"}`;
@@ -214,6 +218,8 @@ function apiFactToFact(f: ApiFact): Fact {
     subcategory: f.subcategory ?? undefined,
     addedAt: new Date(f.created_at).toLocaleDateString("ru-RU", { day: "numeric", month: "short" }),
     source: f.source,
+    confidence: f.confidence,
+    status: f.status ?? "active",
   };
 }
 
@@ -285,7 +291,7 @@ export function useChatStore() {
       try {
         const [apiSessions, apiFacts, apiSettings, apiSummaries] = await Promise.all([
           api.sessions.list(),
-          api.facts.list(),
+          api.facts.list({ include_review: true }),
           api.settings.get(),
           api.summaries.list().catch(() => []),
         ]);
@@ -391,7 +397,7 @@ export function useChatStore() {
     const data = await res.json();
     const raw: string = data?.choices?.[0]?.message?.content ?? "";
 
-    let result: { operations: Array<{ op: string; id?: string; keep_id?: string; delete_ids?: string[]; text?: string; category?: string; subcategory?: string }>; summary: string };
+    let result: { operations: Array<{ op: string; id?: string; keep_id?: string; delete_ids?: string[]; ids?: string[]; text?: string; category?: string; subcategory?: string; status?: string; reason?: string }>; summary: string };
     try {
       const match = raw.match(/\{[\s\S]*\}/);
       result = JSON.parse(match ? match[0] : raw);
@@ -400,6 +406,7 @@ export function useChatStore() {
     }
 
     let applied = 0;
+    let conflicts = 0;
     for (const op of result.operations ?? []) {
       try {
         if (op.op === "update" && op.id) {
@@ -416,6 +423,13 @@ export function useChatStore() {
             await api.facts.delete(did);
           }
           applied++;
+        } else if (op.op === "conflict" && op.ids?.length) {
+          // Помечаем все конфликтующие факты как needs_review
+          for (const cid of op.ids) {
+            await api.facts.update(cid, { status: "needs_review" });
+          }
+          conflicts++;
+          console.log(`[CONSOLIDATION] conflict flagged: ${op.ids.join(", ")} — ${op.reason}`);
         }
       } catch (e) {
         console.warn("[CONSOLIDATION] op failed", op, e);
@@ -436,7 +450,8 @@ export function useChatStore() {
       console.warn("[CONSOLIDATION] portrait update failed", e);
     }
 
-    return `${result.summary} (операций: ${applied})`;
+    const conflictNote = conflicts > 0 ? `, конфликтов: ${conflicts}` : "";
+    return `${result.summary} (операций: ${applied}${conflictNote})`;
   }, [config, facts]);
 
   const SUMMARY_SYSTEM = `You are a knowledge base curator. Given a list of facts about a person or their business under one category, write a comprehensive, dense summary that captures ALL important information.
@@ -718,12 +733,12 @@ Rules:
           // 1. ПОРТРЕТ компактный (~100 токенов) — ВСЕГДА
           //    "Кто передо мной" — идентичность пользователя в каждом запросе
           //
-          // 2. РЕЗЮМЕ всех категорий (~300-500 токенов) — ВСЕГДА
-          //    Периферийное зрение: LLM видит всю картину жизни/бизнеса
-          //    даже когда разговор про конкретную тему
+          // 2. РЕЗЮМЕ: "О компании" + "Цели/проблемы" — ВСЕГДА (anchor)
+          //    + остальные резюме — только если семантически близки к вопросу (RAG)
+          //    Signal/noise: убираем нерелевантный шум из промпта
           //
           // 3. РЕЛЕВАНТНЫЕ ФАКТЫ по RAG (~200-300 токенов) — ВСЕГДА
-          //    Точные детали под текущий вопрос, 8-10 штук
+          //    keywords → если < 3 результатов → ILIKE fallback → последние N
           //
           // Итого: ~600-900 токенов памяти, не растёт с размером базы
           // ─────────────────────────────────────────────────────────────────
@@ -734,16 +749,27 @@ Rules:
             ? `\n\n[О пользователе: ${portraitCompact}]`
             : "";
 
-          // Слой 2: резюме всех категорий (всегда, фиксированный объём)
+          // Слой 2: умная инъекция резюме
+          // Anchor-категории — всегда в промпте (ключевой бизнес-контекст)
+          const ANCHOR_CATS = new Set(["О компании", "Цели", "Цели/проблемы", "Личные проекты"]);
+          // Прочие категории — только если запрос касается их (keyword-match по тексту вопроса)
+          const queryLower = text.toLowerCase();
           const summaryLines = Object.entries(summaries)
-            .filter(([cat, s]) => s && cat !== "__portrait__")
+            .filter(([cat, s]) => {
+              if (!s || cat === "__portrait__") return false;
+              if (ANCHOR_CATS.has(cat)) return true;
+              // RAG по резюме: включаем если хотя бы 1 слово из названия категории есть в запросе
+              const catWords = cat.toLowerCase().split(/[\s/]+/);
+              return catWords.some((w) => w.length >= 4 && queryLower.includes(w));
+            })
             .map(([cat, s]) => `${cat}: ${s}`)
             .join("\n");
           const summaryBlock = summaryLines
             ? `\n\n[Контекст по разделам:\n${summaryLines}]`
             : "";
 
-          // Слой 3: релевантные факты по RAG (всегда, 8-10 штук)
+          // Слой 3: релевантные факты — гибридный RAG
+          // keywords → если < 3 результатов → ILIKE fallback (уже в бэкенде)
           let ragBlock = "";
           if (facts.length > 0) {
             let ragFacts: Array<{ category: string; subcategory?: string; content?: string; text?: string }> = [];
@@ -752,7 +778,13 @@ Rules:
             } else {
               try {
                 const fetched = await api.facts.relevant(text, 8);
-                ragFacts = fetched.length > 0 ? fetched : facts.slice(0, 8);
+                // Гибридный порог: если нашли < 3 — добавляем свежие факты до 8 штук
+                if (fetched.length >= 3) {
+                  ragFacts = fetched;
+                } else {
+                  const fallback = facts.filter((f) => !fetched.find((r) => r.id === f.id));
+                  ragFacts = [...fetched, ...fallback].slice(0, 8);
+                }
               } catch {
                 ragFacts = facts.slice(0, 8);
               }

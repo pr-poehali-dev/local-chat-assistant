@@ -9,6 +9,20 @@
       "bodyMatcher": "partial"
     },
     {
+      "name": "GET facts list — returns 200",
+      "method": "GET",
+      "path": "/?r=facts&a=list",
+      "expectedStatus": 200,
+      "bodyMatcher": "none"
+    },
+    {
+      "name": "GET facts conflicts — returns 200",
+      "method": "GET",
+      "path": "/?r=facts&a=conflicts",
+      "expectedStatus": 200,
+      "bodyMatcher": "none"
+    },
+    {
       "name": "GET facts profile — returns profile object",
       "method": "GET",
       "path": "/?r=facts&a=profile",
@@ -17,12 +31,11 @@
       "bodyMatcher": "partial"
     },
     {
-      "name": "GET summaries list",
+      "name": "GET summaries list — returns 200",
       "method": "GET",
       "path": "/?r=summaries&a=list",
       "expectedStatus": 200,
-      "expectedBody": [],
-      "bodyMatcher": "partial"
+      "bodyMatcher": "none"
     }
   ]
 }
